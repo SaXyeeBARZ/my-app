@@ -20,6 +20,11 @@ on:
         required: false
         type: string
         default: ""
+      build_mode:
+        description: "Mode build: release / debug / analyze"
+        required: false
+        type: string
+        default: "release"
 
 run-name: build-${{ inputs.user_id }}-${{ github.run_number }}
 
@@ -41,9 +46,6 @@ jobs:
           distribution: zulu
           java-version: "17"
 
-      # ═══════════════════════════════════════════════════════════
-      # 🔑 Flutter dipin ke 3.24.0 — stabil & kompatibel Gradle 7.5+
-      # ═══════════════════════════════════════════════════════════
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
@@ -105,10 +107,6 @@ jobs:
           echo "PROJ_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
           echo "Project directory: $PROJECT_DIR"
 
-      # ═══════════════════════════════════════════════════════════
-      # 🔑 PATCH GRADLE WRAPPER — INI YANG BIKIN BUILD BERHASIL!
-      # Ganti semua versi Gradle ke 8.14.0 (support 7.x, 8.x, 9.x)
-      # ═══════════════════════════════════════════════════════════
       - name: Patch Gradle Wrapper (CI Only)
         env:
           GRADLE_VERSION: "8.14.0"
@@ -175,42 +173,43 @@ jobs:
           cd "$PROJ_DIR"
           flutter pub get
 
-      - name: Build Release APK
-        shell: bash
-        run: |
-          set -Eeuo pipefail
-          cd "$PROJ_DIR"
-          flutter build apk --release
-
-      - name: Prepare Output
+      - name: Build (Release / Debug / Analyze)
         env:
+          MODE: ${{ inputs.build_mode || 'release' }}
           APP_NAME: ${{ inputs.app_name }}
         shell: bash
         run: |
           set -Eeuo pipefail
 
-          APK="$PROJ_DIR/build/app/outputs/flutter-apk/app-release.apk"
-
-          if [ ! -f "$APK" ]; then
-            echo "::error::APK hasil build tidak ditemukan."
-            exit 1
-          fi
+          cd "$PROJ_DIR"
+          MODE="${MODE:-release}"
+          echo "🎯 Mode: $MODE"
 
           mkdir -p output
 
-          SAFE_NAME="$(
-            printf '%s' "$APP_NAME" |
-              tr '/\\' '__' |
-              tr -cd '[:alnum:] ._-'
-          )"
+          if [ "$MODE" = "analyze" ]; then
+            echo "🔎 Menjalankan flutter analyze..."
+            flutter analyze > analysis-report.txt 2>&1 || true
+            cp analysis-report.txt "output/${APP_NAME}-analysis.txt"
+          else
+            echo "🔨 Building APK mode: $MODE"
+            flutter build apk --$MODE
 
-          SAFE_NAME="$(printf '%s' "$SAFE_NAME" | xargs)"
+            APK="build/app/outputs/flutter-apk/app-${MODE}.apk"
 
-          if [ -z "$SAFE_NAME" ]; then
-            SAFE_NAME="app"
+            if [ ! -f "$APK" ]; then
+              APK="$(find build/app/outputs -name "*.apk" -print -quit)"
+            fi
+
+            if [ -z "$APK" ] || [ ! -f "$APK" ]; then
+              echo "::error::File APK tidak ditemukan setelah build."
+              exit 1
+            fi
+
+            cp "$APK" "output/${APP_NAME}.apk"
           fi
 
-          cp "$APK" "output/${SAFE_NAME}.apk"
+          echo "📦 Output:"
           ls -lh output/
 
       - name: Create Release
@@ -218,7 +217,7 @@ jobs:
         with:
           tag_name: build-${{ inputs.user_id }}-${{ github.run_number }}
           name: "${{ inputs.app_name }} #${{ github.run_number }}"
-          files: output/*.apk
+          files: output/*
           token: ${{ secrets.GITHUB_TOKEN }}
           fail_on_unmatched_files: true
 
@@ -264,6 +263,10 @@ jobs:
                 "https://api.github.com/repos/${REPOSITORY}/git/refs/tags/${UPLOAD_TAG}" \
                 || true
             fi
+          elif [ "$HTTP_CODE" = "404" ]; then
+            echo "Release sementara tidak ditemukan; cleanup dilewati."
+          else
+            echo "::warning::Cleanup gagal. HTTP ${HTTP_CODE}"
           fi
 
           echo "Cleanup selesai."
