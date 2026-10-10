@@ -1,1 +1,123 @@
+name: Build Flutter APK
+
+on:
+  workflow_dispatch:
+    inputs:
+      zip_url:
+        description: "URL download ZIP project Flutter"
+        required: true
+        type: string
+      app_name:
+        description: "Nama APK"
+        required: true
+        type: string
+      user_id:
+        description: "Telegram user ID (untuk integrasi notifikasi bila dikonfigurasi)"
+        required: true
+        type: string
+      upload_tag:
+        description: "Tag GitHub Release (contoh: v1.0.0)"
+        required: false
+        default: "latest-build"
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: flutter-apk-${{ github.workflow }}-${{ inputs.upload_tag }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: gradle
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Download project ZIP
+        env:
+          ZIP_URL: ${{ inputs.zip_url }}
+        run: |
+          set -euo pipefail
+          test -n "$ZIP_URL" || { echo "::error::zip_url kosong"; exit 1; }
+          curl --fail --location --silent --show-error \
+            --retry 3 --retry-delay 2 "$ZIP_URL" -o project.zip
+          test -s project.zip || { echo "::error::ZIP hasil download kosong"; exit 1; }
+
+      - name: Extract project ZIP
+        run: |
+          set -euo pipefail
+          mkdir -p project
+          unzip -q project.zip -d project
+          rm project.zip
+
+          # Cari pubspec.yaml, termasuk jika ZIP berisi satu folder induk.
+          PUBSPEC="$(find project -type f -name pubspec.yaml -print -quit)"
+          if [ -z "$PUBSPEC" ]; then
+            echo "::error::pubspec.yaml tidak ditemukan di dalam ZIP"
+            exit 1
+          fi
+          PROJECT_DIR="$(dirname "$PUBSPEC")"
+          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
+
+      - name: Install Flutter dependencies
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: flutter pub get
+
+      - name: Build release APK
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: flutter build apk --release
+
+      - name: Prepare APK artifact
+        env:
+          APP_NAME: ${{ inputs.app_name }}
+        run: |
+          set -euo pipefail
+          APK_PATH="$PROJECT_DIR/build/app/outputs/flutter-apk/app-release.apk"
+          test -f "$APK_PATH" || { echo "::error::APK hasil build tidak ditemukan"; exit 1; }
+          mkdir -p output
+          SAFE_NAME="$(printf '%s' "$APP_NAME" | tr -cd '[:alnum:]_.-' | cut -c1-80)"
+          [ -n "$SAFE_NAME" ] || SAFE_NAME="app"
+          cp "$APK_PATH" "output/${SAFE_NAME}.apk"
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: flutter-apk
+          path: output/*.apk
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Create or update GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG_NAME: ${{ inputs.upload_tag }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          TAG_NAME="${TAG_NAME:-latest-build}"
+          if gh release view "$TAG_NAME" --repo "$REPO" >/dev/null 2>&1; then
+            gh release upload "$TAG_NAME" output/*.apk --repo "$REPO" --clobber
+          else
+            gh release create "$TAG_NAME" output/*.apk \
+              --repo "$REPO" \
+              --title "Flutter APK ${TAG_NAME}" \
+              --notes "APK dibuat otomatis oleh GitHub Actions."
+          fi
 
