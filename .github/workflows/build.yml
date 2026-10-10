@@ -1,0 +1,164 @@
+name: Build Flutter APK
+
+on:
+  workflow_dispatch:
+    inputs:
+      zip_url:
+        description: URL ZIP proyek Flutter
+        required: true
+        type: string
+      app_name:
+        description: Nama file APK tanpa ekstensi
+        required: true
+        type: string
+      user_id:
+        description: Telegram user ID
+        required: true
+        type: string
+      upload_tag:
+        description: Tag rilis ZIP sementara
+        required: false
+        type: string
+        default: ""
+
+run-name: "build-${{ inputs.user_id }}-${{ github.run_number }}"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Java
+        uses: actions/setup-java@v5
+        with:
+          distribution: zulu
+          java-version: "17"
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: "3.22.0"
+          channel: stable
+          cache: true
+
+      - name: Download ZIP
+        env:
+          ZIP_URL: ${{ inputs.zip_url }}
+        run: |
+          set -euo pipefail
+
+          curl --fail --location --show-error \
+            --retry 5 \
+            --retry-delay 5 \
+            --retry-all-errors \
+            --max-filesize 314572800 \
+            "$ZIP_URL" \
+            -o project.zip
+
+          test -s project.zip
+          echo "ZIP berhasil diunduh."
+          ls -lh project.zip
+
+      - name: Extract project
+        run: |
+          set -euo pipefail
+
+          mkdir -p _proj
+          unzip -q project.zip -d _proj
+
+          PUB="$(find _proj -maxdepth 8 \
+            -type f -name pubspec.yaml -print -quit)"
+
+          if [ -z "$PUB" ]; then
+            echo "::error::pubspec.yaml tidak ditemukan di ZIP."
+            exit 1
+          fi
+
+          echo "PROJ_DIR=$(dirname "$PUB")" >> "$GITHUB_ENV"
+          echo "Proyek ditemukan: $(dirname "$PUB")"
+
+      - name: Get Flutter dependencies
+        run: |
+          set -euo pipefail
+          cd "$PROJ_DIR"
+          flutter pub get
+
+      - name: Build release APK
+        run: |
+          set -euo pipefail
+          cd "$PROJ_DIR"
+          flutter build apk --release
+
+      - name: Prepare APK
+        env:
+          APP_NAME: ${{ inputs.app_name }}
+        run: |
+          set -euo pipefail
+
+          mkdir -p output
+
+          SAFE_NAME="$(printf '%s' "$APP_NAME" \
+            | tr -cd '[:alnum:]_.-' | cut -c1-80)"
+
+          if [ -z "$SAFE_NAME" ]; then
+            SAFE_NAME="app"
+          fi
+
+          APK="$PROJ_DIR/build/app/outputs/flutter-apk/app-release.apk"
+
+          if [ ! -s "$APK" ]; then
+            echo "::error::File APK tidak ditemukan."
+            exit 1
+          fi
+
+          cp "$APK" "output/${SAFE_NAME}.apk"
+          echo "APK_NAME=${SAFE_NAME}.apk" >> "$GITHUB_ENV"
+
+          ls -lh output/
+
+      - name: Publish APK release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: "build-${{ inputs.user_id }}-${{ github.run_number }}"
+          name: "${{ inputs.app_name }} #${{ github.run_number }}"
+          files: output/*.apk
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fail_on_unmatched_files: true
+
+      - name: Cleanup temporary ZIP release
+        if: ${{ always() && inputs.upload_tag != '' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          UPLOAD_TAG: ${{ inputs.upload_tag }}
+        run: |
+          set -u
+
+          API="https://api.github.com/repos/$REPO"
+
+          RELEASE_ID="$(curl -sS \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            "$API/releases/tags/$UPLOAD_TAG" \
+            | jq -r '.id // empty' 2>/dev/null || true)"
+
+          if [ -n "$RELEASE_ID" ]; then
+            curl -sS -X DELETE \
+              -H "Authorization: Bearer $GH_TOKEN" \
+              -H "Accept: application/vnd.github+json" \
+              "$API/releases/$RELEASE_ID" \
+              >/dev/null || true
+          fi
+
+          curl -sS -X DELETE \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            "$API/git/refs/tags/$UPLOAD_TAG" \
+            >/dev/null || true
