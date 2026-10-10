@@ -4,11 +4,11 @@ on:
   workflow_dispatch:
     inputs:
       zip_url:
-        description: URL ZIP proyek Flutter
+        description: Public GitHub Release URL for the uploaded project ZIP
         required: true
         type: string
       app_name:
-        description: Nama file APK tanpa ekstensi
+        description: APK filename without extension
         required: true
         type: string
       user_id:
@@ -16,12 +16,17 @@ on:
         required: true
         type: string
       upload_tag:
-        description: Tag rilis ZIP sementara
+        description: Temporary ZIP release tag to delete after build
         required: false
         type: string
         default: ""
+      flutter_version:
+        description: Flutter version (stable or an exact version such as 3.29.3)
+        required: false
+        type: string
+        default: stable
 
-run-name: "build-${{ inputs.user_id }}-${{ github.run_number }}"
+run-name: build-${{ inputs.user_id }}-${{ github.run_number }}
 
 permissions:
   contents: write
@@ -30,21 +35,17 @@ jobs:
   build:
     runs-on: ubuntu-latest
     timeout-minutes: 60
-
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Setup Java
-        uses: actions/setup-java@v5
+      - uses: actions/setup-java@v4
         with:
           distribution: zulu
           java-version: "17"
 
-      - name: Setup Flutter
-        uses: subosito/flutter-action@v2
+      - uses: subosito/flutter-action@v2
         with:
-          flutter-version: "3.22.0"
+          flutter-version: ${{ inputs.flutter_version }}
           channel: stable
           cache: true
 
@@ -53,38 +54,26 @@ jobs:
           ZIP_URL: ${{ inputs.zip_url }}
         run: |
           set -euo pipefail
-
           curl --fail --location --show-error \
-            --retry 5 \
-            --retry-delay 5 \
-            --retry-all-errors \
+            --retry 5 --retry-delay 5 --retry-all-errors \
             --max-filesize 314572800 \
-            "$ZIP_URL" \
-            -o project.zip
-
+            "$ZIP_URL" -o project.zip
+          ls -lah project.zip
           test -s project.zip
-          echo "ZIP berhasil diunduh."
-          ls -lh project.zip
 
       - name: Extract project
         run: |
           set -euo pipefail
-
           mkdir -p _proj
           unzip -q project.zip -d _proj
-
-          PUB="$(find _proj -maxdepth 8 \
-            -type f -name pubspec.yaml -print -quit)"
-
+          PUB="$(find _proj -maxdepth 5 -name pubspec.yaml -type f -print -quit)"
           if [ -z "$PUB" ]; then
-            echo "::error::pubspec.yaml tidak ditemukan di ZIP."
+            echo "::error::ZIP tidak berisi pubspec.yaml di kedalaman yang didukung"
             exit 1
           fi
-
           echo "PROJ_DIR=$(dirname "$PUB")" >> "$GITHUB_ENV"
-          echo "Proyek ditemukan: $(dirname "$PUB")"
 
-      - name: Get Flutter dependencies
+      - name: Flutter pub get
         run: |
           set -euo pipefail
           cd "$PROJ_DIR"
@@ -101,36 +90,19 @@ jobs:
           APP_NAME: ${{ inputs.app_name }}
         run: |
           set -euo pipefail
-
           mkdir -p output
-
-          SAFE_NAME="$(printf '%s' "$APP_NAME" \
-            | tr -cd '[:alnum:]_.-' | cut -c1-80)"
-
-          if [ -z "$SAFE_NAME" ]; then
-            SAFE_NAME="app"
-          fi
-
-          APK="$PROJ_DIR/build/app/outputs/flutter-apk/app-release.apk"
-
-          if [ ! -s "$APK" ]; then
-            echo "::error::File APK tidak ditemukan."
-            exit 1
-          fi
-
-          cp "$APK" "output/${SAFE_NAME}.apk"
+          SAFE_NAME="$(printf '%s' "$APP_NAME" | tr -cd '[:alnum:]_.-' | cut -c1-80)"
+          [ -n "$SAFE_NAME" ] || SAFE_NAME="app"
+          cp "$PROJ_DIR/build/app/outputs/flutter-apk/app-release.apk" "output/${SAFE_NAME}.apk"
           echo "APK_NAME=${SAFE_NAME}.apk" >> "$GITHUB_ENV"
-
-          ls -lh output/
 
       - name: Publish APK release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: "build-${{ inputs.user_id }}-${{ github.run_number }}"
+          tag_name: build-${{ inputs.user_id }}-${{ github.run_number }}
           name: "${{ inputs.app_name }} #${{ github.run_number }}"
           files: output/*.apk
           token: ${{ secrets.GITHUB_TOKEN }}
-          fail_on_unmatched_files: true
 
       - name: Cleanup temporary ZIP release
         if: ${{ always() && inputs.upload_tag != '' }}
@@ -139,26 +111,19 @@ jobs:
           REPO: ${{ github.repository }}
           UPLOAD_TAG: ${{ inputs.upload_tag }}
         run: |
-          set -u
-
+          set -euo pipefail
           API="https://api.github.com/repos/$REPO"
-
-          RELEASE_ID="$(curl -sS \
-            -H "Authorization: Bearer $GH_TOKEN" \
-            -H "Accept: application/vnd.github+json" \
-            "$API/releases/tags/$UPLOAD_TAG" \
-            | jq -r '.id // empty' 2>/dev/null || true)"
-
+          RELEASE_ID="$(curl --silent --show-error --fail \\
+            -H "Authorization: Bearer $GH_TOKEN" \\
+            -H "Accept: application/vnd.github+json" \\
+            "$API/releases/tags/$UPLOAD_TAG" | jq -r '.id // empty' || true)"
           if [ -n "$RELEASE_ID" ]; then
-            curl -sS -X DELETE \
-              -H "Authorization: Bearer $GH_TOKEN" \
-              -H "Accept: application/vnd.github+json" \
-              "$API/releases/$RELEASE_ID" \
-              >/dev/null || true
+            curl --silent --show-error --fail-with-body -X DELETE \\
+              -H "Authorization: Bearer $GH_TOKEN" \\
+              -H "Accept: application/vnd.github+json" \\
+              "$API/releases/$RELEASE_ID" || true
           fi
-
-          curl -sS -X DELETE \
-            -H "Authorization: Bearer $GH_TOKEN" \
-            -H "Accept: application/vnd.github+json" \
-            "$API/git/refs/tags/$UPLOAD_TAG" \
-            >/dev/null || true
+          curl --silent --show-error --fail-with-body -X DELETE \\
+            -H "Authorization: Bearer $GH_TOKEN" \\
+            -H "Accept: application/vnd.github+json" \\
+            "$API/git/refs/tags/$UPLOAD_TAG" || true
