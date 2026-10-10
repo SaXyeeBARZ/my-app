@@ -1,4 +1,4 @@
-name: Build Flutter APK
+name: Build Flutter Project
 
 on:
   workflow_dispatch:
@@ -8,7 +8,7 @@ on:
         required: true
         type: string
       app_name:
-        description: APK filename without extension
+        description: APK/report filename without extension
         required: true
         type: string
       user_id:
@@ -16,37 +16,62 @@ on:
         required: true
         type: string
       upload_tag:
-        description: Temporary ZIP release tag to delete after build
+        description: Temporary ZIP release tag to delete after processing
         required: false
         type: string
         default: ""
+      build_mode:
+        description: Build mode selected in Telegram
+        required: true
+        type: choice
+        options:
+          - release
+          - debug
+          - analyze
+        default: release
       flutter_version:
-        description: Flutter version (stable or an exact version such as 3.29.3)
+        description: Use stable or an exact Flutter version such as 3.29.3
         required: false
         type: string
         default: stable
 
-run-name: build-${{ inputs.user_id }}-${{ github.run_number }}
+run-name: web2apk-${{ inputs.build_mode }}-${{ inputs.user_id }}-${{ github.run_number }}
 
 permissions:
   contents: write
+
+env:
+  CI: "true"
 
 jobs:
   build:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout workflow repository
+        uses: actions/checkout@v4
 
-      - uses: actions/setup-java@v4
+      - name: Setup Java
+        uses: actions/setup-java@v4
         with:
           distribution: zulu
           java-version: "17"
 
-      - uses: subosito/flutter-action@v2
+      # `flutter-version: stable` is invalid in some action versions. Let the
+      # stable channel resolve latest stable; only pass flutter-version for an exact version.
+      - name: Setup latest stable Flutter
+        if: ${{ inputs.flutter_version == '' || inputs.flutter_version == 'stable' }}
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Setup selected Flutter version
+        if: ${{ inputs.flutter_version != '' && inputs.flutter_version != 'stable' }}
+        uses: subosito/flutter-action@v2
         with:
           flutter-version: ${{ inputs.flutter_version }}
-          channel: stable
+          channel: any
           cache: true
 
       - name: Download ZIP
@@ -54,21 +79,18 @@ jobs:
           ZIP_URL: ${{ inputs.zip_url }}
         run: |
           set -euo pipefail
-          curl --fail --location --show-error \
-            --retry 5 --retry-delay 5 --retry-all-errors \
-            --max-filesize 314572800 \
-            "$ZIP_URL" -o project.zip
-          ls -lah project.zip
+          curl --fail --location --show-error --retry 5 --retry-delay 5 --retry-all-errors --max-filesize 314572800 "$ZIP_URL" -o project.zip
           test -s project.zip
+          ls -lah project.zip
 
       - name: Extract project
         run: |
           set -euo pipefail
           mkdir -p _proj
           unzip -q project.zip -d _proj
-          PUB="$(find _proj -maxdepth 5 -name pubspec.yaml -type f -print -quit)"
+          PUB="$(find _proj -maxdepth 8 -type f -name pubspec.yaml -print -quit)"
           if [ -z "$PUB" ]; then
-            echo "::error::ZIP tidak berisi pubspec.yaml di kedalaman yang didukung"
+            echo "::error::ZIP tidak berisi pubspec.yaml pada kedalaman yang didukung"
             exit 1
           fi
           echo "PROJ_DIR=$(dirname "$PUB")" >> "$GITHUB_ENV"
@@ -77,31 +99,74 @@ jobs:
         run: |
           set -euo pipefail
           cd "$PROJ_DIR"
+          flutter --version
           flutter pub get
 
-      - name: Build release APK
+      - name: Run Flutter analyze
+        if: ${{ inputs.build_mode == 'analyze' }}
+        run: |
+          set -uo pipefail
+          cd "$PROJ_DIR"
+          mkdir -p "$GITHUB_WORKSPACE/output"
+          set +e
+          flutter analyze --no-pub > "$GITHUB_WORKSPACE/output/analysis-report.txt" 2>&1
+          ANALYZE_EXIT=$?
+          set -e
+          {
+            echo "Web2APK Flutter Analysis Report"
+            echo "Mode: analyze"
+            echo "Flutter version: $(flutter --version | head -n 1)"
+            echo "Exit code: $ANALYZE_EXIT"
+            echo "Generated: $(date -u +'%Y-%m-%d %H:%M:%S UTC')"
+            echo "=================================================="
+            cat "$GITHUB_WORKSPACE/output/analysis-report.txt"
+          } > "$GITHUB_WORKSPACE/output/analysis-report.tmp"
+          mv "$GITHUB_WORKSPACE/output/analysis-report.tmp" "$GITHUB_WORKSPACE/output/analysis-report.txt"
+          # Findings are delivered as a report; analyzer findings do not suppress the report upload.
+          echo "Flutter analyze completed with exit code $ANALYZE_EXIT"
+
+      - name: Build Release APK
+        if: ${{ inputs.build_mode == 'release' }}
         run: |
           set -euo pipefail
           cd "$PROJ_DIR"
           flutter build apk --release
 
-      - name: Prepare APK
+      - name: Build Debug APK
+        if: ${{ inputs.build_mode == 'debug' }}
+        run: |
+          set -euo pipefail
+          cd "$PROJ_DIR"
+          flutter build apk --debug
+
+      - name: Prepare APK output
+        if: ${{ inputs.build_mode == 'release' || inputs.build_mode == 'debug' }}
         env:
           APP_NAME: ${{ inputs.app_name }}
+          BUILD_MODE: ${{ inputs.build_mode }}
         run: |
           set -euo pipefail
           mkdir -p output
           SAFE_NAME="$(printf '%s' "$APP_NAME" | tr -cd '[:alnum:]_.-' | cut -c1-80)"
           [ -n "$SAFE_NAME" ] || SAFE_NAME="app"
-          cp "$PROJ_DIR/build/app/outputs/flutter-apk/app-release.apk" "output/${SAFE_NAME}.apk"
-          echo "APK_NAME=${SAFE_NAME}.apk" >> "$GITHUB_ENV"
+          if [ "$BUILD_MODE" = "debug" ]; then
+            SOURCE="$PROJ_DIR/build/app/outputs/flutter-apk/app-debug.apk"
+            DEST="output/${SAFE_NAME}-debug.apk"
+          else
+            SOURCE="$PROJ_DIR/build/app/outputs/flutter-apk/app-release.apk"
+            DEST="output/${SAFE_NAME}-release.apk"
+          fi
+          test -s "$SOURCE"
+          cp "$SOURCE" "$DEST"
+          ls -lah "$DEST"
 
-      - name: Publish APK release
+      - name: Publish result release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: build-${{ inputs.user_id }}-${{ github.run_number }}
-          name: "${{ inputs.app_name }} #${{ github.run_number }}"
-          files: output/*.apk
+          name: "Web2APK ${{ inputs.build_mode }} - ${{ inputs.app_name }} #${{ github.run_number }}"
+          body: "Generated by Web2APK Builder. Mode: ${{ inputs.build_mode }}"
+          files: output/*
           token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Cleanup temporary ZIP release
@@ -110,20 +175,13 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
           UPLOAD_TAG: ${{ inputs.upload_tag }}
+        shell: bash
         run: |
           set -euo pipefail
           API="https://api.github.com/repos/$REPO"
-          RELEASE_ID="$(curl --silent --show-error --fail \\
-            -H "Authorization: Bearer $GH_TOKEN" \\
-            -H "Accept: application/vnd.github+json" \\
-            "$API/releases/tags/$UPLOAD_TAG" | jq -r '.id // empty' || true)"
+          RELEASE_JSON="$(curl --silent --show-error --fail -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" "$API/releases/tags/$UPLOAD_TAG" || true)"
+          RELEASE_ID="$(printf '%s' "$RELEASE_JSON" | jq -r '.id // empty' 2>/dev/null || true)"
           if [ -n "$RELEASE_ID" ]; then
-            curl --silent --show-error --fail-with-body -X DELETE \\
-              -H "Authorization: Bearer $GH_TOKEN" \\
-              -H "Accept: application/vnd.github+json" \\
-              "$API/releases/$RELEASE_ID" || true
+            curl --silent --show-error --fail-with-body -X DELETE -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" "$API/releases/$RELEASE_ID" || true
           fi
-          curl --silent --show-error --fail-with-body -X DELETE \\
-            -H "Authorization: Bearer $GH_TOKEN" \\
-            -H "Accept: application/vnd.github+json" \\
-            "$API/git/refs/tags/$UPLOAD_TAG" || true
+          curl --silent --show-error --fail-with-body -X DELETE -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" "$API/git/refs/tags/$UPLOAD_TAG" || true
