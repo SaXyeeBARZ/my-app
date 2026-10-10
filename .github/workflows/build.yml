@@ -46,10 +46,14 @@ jobs:
           distribution: zulu
           java-version: "17"
 
+      # ═══════════════════════════════════════════════════════════
+      # 🔑 Flutter 3.35.0 — support Dart 3.8.0+ (project modern)
+      # Kompatibel dengan Gradle 8.14.0 (auto-patch di bawah)
+      # ═══════════════════════════════════════════════════════════
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: "3.24.0"
+          flutter-version: "3.35.0"
           channel: stable
           cache: true
 
