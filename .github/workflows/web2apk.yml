@@ -1,0 +1,198 @@
+name: Web2APK Build
+
+on:
+  workflow_dispatch:
+    inputs:
+      url:
+        description: 'URL website'
+        required: true
+        type: string
+      app_name:
+        description: 'Nama APK'
+        required: true
+        type: string
+      icon_url:
+        description: 'URL icon (opsional)'
+        required: false
+        type: string
+        default: ''
+
+run-name: web2apk-${{ inputs.app_name }}-${{ github.run_number }}
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: zulu
+          java-version: "17"
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: "3.35.0"
+          channel: stable
+          cache: true
+
+      - name: Generate Flutter WebView Project
+        env:
+          TARGET_URL: ${{ inputs.url }}
+          APP_NAME: ${{ inputs.app_name }}
+          ICON_URL: ${{ inputs.icon_url }}
+        shell: bash
+        run: |
+          set -e
+          APP_SLUG=$(echo "$APP_NAME" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9')
+          [ -z "$APP_SLUG" ] && APP_SLUG="myapp"
+          PKG="com.web2apk.$APP_SLUG"
+
+          echo "📱 App: $APP_NAME"
+          echo "🌐 URL: $TARGET_URL"
+          echo "📦 Package: $PKG"
+
+          flutter create --org com.web2apk --project-name "$APP_SLUG" --platforms android _proj
+          cd _proj
+
+          # Pubspec minimal
+          cat > pubspec.yaml <<EOF
+          name: $APP_SLUG
+          description: WebView wrapper for $APP_NAME
+          publish_to: 'none'
+          version: 1.0.0+1
+          environment:
+            sdk: '>=3.0.0 <4.0.0'
+          dependencies:
+            flutter:
+              sdk: flutter
+            webview_flutter: ^4.7.0
+            cupertino_icons: ^1.0.6
+          dev_dependencies:
+            flutter_test:
+              sdk: flutter
+            flutter_lints: ^3.0.0
+          flutter:
+            uses-material-design: true
+          EOF
+
+          # Main.dart dengan WebView
+          cat > lib/main.dart <<'DART_EOF'
+          import 'package:flutter/material.dart';
+          import 'package:webview_flutter/webview_flutter.dart';
+
+          void main() {
+            WidgetsFlutterBinding.ensureInitialized();
+            runApp(const WebApp());
+          }
+
+          class WebApp extends StatefulWidget {
+            const WebApp({super.key});
+            @override
+            State<WebApp> createState() => _WebAppState();
+          }
+
+          class _WebAppState extends State<WebApp> {
+            late final WebViewController _controller;
+            bool _loading = true;
+
+            @override
+            void initState() {
+              super.initState();
+              _controller = WebViewController()
+                ..setJavaScriptMode(JavaScriptMode.unrestricted)
+                ..setBackgroundColor(const Color(0xFFFFFFFF))
+                ..setNavigationDelegate(NavigationDelegate(
+                  onPageStarted: (_) => setState(() => _loading = true),
+                  onPageFinished: (_) => setState(() => _loading = false),
+                  onWebResourceError: (err) {
+                    debugPrint('WebView error: ${err.description}');
+                  },
+                ))
+                ..loadRequest(Uri.parse(AppConst.url));
+            }
+
+            @override
+            Widget build(BuildContext context) {
+              return MaterialApp(
+                debugShowCheckedModeBanner: false,
+                theme: ThemeData(
+                  primarySwatch: Colors.blue,
+                  useMaterial3: true,
+                ),
+                home: Scaffold(
+                  body: SafeArea(
+                    child: Stack(
+                      children: [
+                        WebViewWidget(controller: _controller),
+                        if (_loading)
+                          const Center(child: CircularProgressIndicator()),
+                      ],
+                    ),
+                  ),
+                ),
+              );
+            }
+          }
+
+          class AppConst {
+            static const url = 'TARGET_URL_PLACEHOLDER';
+          }
+          DART_EOF
+
+          # Ganti placeholder dengan URL sebenarnya
+          sed -i "s|TARGET_URL_PLACEHOLDER|$TARGET_URL|g" lib/main.dart
+
+          # Set nama app di AndroidManifest
+          sed -i "s|android:label=\"[^\"]*\"|android:label=\"$APP_NAME\"|" android/app/src/main/AndroidManifest.xml
+
+          # Internet permission
+          sed -i 's|<application|<uses-permission android:name="android.permission.INTERNET"/>\n    <application|' android/app/src/main/AndroidManifest.xml
+
+          echo "✅ Project generated"
+          ls -la lib/
+
+      - name: Pub Get
+        run: |
+          cd _proj
+          flutter pub get
+
+      - name: Build APK
+        run: |
+          cd _proj
+          flutter build apk --release --no-pub
+
+      - name: Prepare Output
+        env:
+          APP_NAME: ${{ inputs.app_name }}
+        shell: bash
+        run: |
+          set -e
+          APK="_proj/build/app/outputs/flutter-apk/app-release.apk"
+          if [ ! -f "$APK" ]; then
+            echo "::error::APK tidak ditemukan"
+            exit 1
+          fi
+
+          mkdir -p output
+          SAFE=$(echo "$APP_NAME" | tr '/\\' '__' | tr -cd '[:alnum:] ._-' | xargs)
+          [ -z "$SAFE" ] && SAFE="app"
+          cp "$APK" "output/${SAFE}.apk"
+          ls -lh output/
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: web2apk-${{ github.run_number }}
+          name: "${{ inputs.app_name }} #${{ github.run_number }}"
+          files: output/*.apk
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fail_on_unmatched_files: true
