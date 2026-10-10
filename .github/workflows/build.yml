@@ -21,7 +21,7 @@ on:
         type: string
         default: ""
       build_mode:
-        description: "Mode build: release / debug / analyze"
+        description: "Mode: release / debug / analyze"
         required: false
         type: string
         default: "release"
@@ -53,30 +53,31 @@ jobs:
           channel: stable
           cache: true
 
-      # ═══════════════════════════════════════════════════════════
-      # 🔑 PRE-CACHE GRADLE 8.14.0
-      # Flutter auto-upgrade akan pakai URL github.com/gradle/...
-      # yang 404. Kita pre-cache di folder Gradle wrapper supaya
-      # meskipun URL salah, Gradle pakai cache lokal.
-      # ═══════════════════════════════════════════════════════════
-      - name: Pre-cache Gradle 8.14.0
+      # ═══════════════════════════════════════════════════════
+      # 🔑 PRE-CACHE GRADLE 8.14 (bukan 8.14.0!)
+      # Download sekali, taruh di cache Gradle wrapper
+      # ═══════════════════════════════════════════════════════
+      - name: Pre-cache Gradle 8.14
         shell: bash
         run: |
           set -uo pipefail
 
-          python3 << 'PYEOF' || echo "⚠️ Pre-cache gagal, lanjut build"
+          python3 << 'PYEOF' || echo "⚠️ Pre-cache gagal, lanjut"
           import hashlib
           import os
           import urllib.request
           import zipfile
 
-          VERSION = "8.14.0"
+          # ⚠️ VERSI YANG BENAR: "8.14" (bukan "8.14.0")
+          VERSION = "8.14"
           REAL_URL = f"https://services.gradle.org/distributions/gradle-{VERSION}-bin.zip"
 
-          # Semua URL yang mungkin Flutter tulis di wrapper
+          # Semua URL yang mungkin muncul di wrapper (termasuk yang buggy dari Flutter)
           CANDIDATE_URLS = [
-              f"https://github.com/gradle/gradle-distributions/releases/download/v{VERSION}/gradle-{VERSION}-bin.zip",
               f"https://services.gradle.org/distributions/gradle-{VERSION}-bin.zip",
+              f"https://github.com/gradle/gradle-distributions/releases/download/v{VERSION}/gradle-{VERSION}-bin.zip",
+              f"https\\://services.gradle.org/distributions/gradle-{VERSION}-bin.zip",
+              f"https\\://github.com/gradle/gradle-distributions/releases/download/v{VERSION}/gradle-{VERSION}-bin.zip",
           ]
 
           def to_base36(n):
@@ -100,11 +101,14 @@ jobs:
           os.makedirs(cache_dir, exist_ok=True)
           zip_path = os.path.join(cache_dir, f"gradle-{VERSION}-bin.zip")
 
+          # Download sekali
           if not os.path.exists(zip_path) or os.path.getsize(zip_path) < 1000000:
               print(f"📥 Downloading Gradle {VERSION}...")
+              print(f"   URL: {REAL_URL}")
               urllib.request.urlretrieve(REAL_URL, zip_path)
               print(f"✅ Downloaded {os.path.getsize(zip_path)} bytes")
 
+          # Extract ke semua hash kemungkinan
           for url in CANDIDATE_URLS:
               h = url_hash(url)
               target = os.path.join(dists_root, h)
@@ -119,8 +123,8 @@ jobs:
               with zipfile.ZipFile(zip_path, 'r') as z:
                   z.extractall(target)
 
+              # Marker file supaya Gradle skip download
               open(os.path.join(target, f"gradle-{VERSION}-bin.zip.ok"), 'w').close()
-              open(os.path.join(target, f"gradle-{VERSION}-bin.zip.lck"), 'w').close()
               print(f"✅ Cached: {h}")
 
           print("\n📂 Cache folder:")
@@ -134,30 +138,13 @@ jobs:
         shell: bash
         run: |
           set -Eeuo pipefail
-
-          if [ -z "$ZIP_URL" ]; then
-            echo "::error::zip_url kosong"
-            exit 1
-          fi
-
           for i in 1 2 3 4 5; do
-            if curl -fL \
-              --retry 3 \
-              --retry-delay 3 \
-              --retry-all-errors \
-              --connect-timeout 30 \
-              --max-filesize 314572800 \
-              -o project.zip "$ZIP_URL"; then
-              break
-            fi
-
-            if [ "$i" -eq 5 ]; then
-              echo "::error::Gagal mengunduh ZIP."
-              exit 1
-            fi
+            if curl -fL --retry 3 --retry-delay 3 --retry-all-errors \
+              --connect-timeout 30 --max-filesize 314572800 \
+              -o project.zip "$ZIP_URL"; then break; fi
+            if [ "$i" -eq 5 ]; then exit 1; fi
             sleep 5
           done
-
           test -s project.zip
           unzip -tq project.zip
           ls -lh project.zip
@@ -166,79 +153,82 @@ jobs:
         shell: bash
         run: |
           set -Eeuo pipefail
-
           mkdir -p _proj
           unzip -q project.zip -d _proj
-
           PUB="$(find _proj -maxdepth 10 -type f -name pubspec.yaml -print -quit)"
-
           if [ -z "$PUB" ]; then
             echo "::error::ZIP tidak berisi pubspec.yaml."
             exit 1
           fi
+          echo "PROJ_DIR=$(dirname "$PUB")" >> "$GITHUB_ENV"
 
-          PROJECT_DIR="$(dirname "$PUB")"
-          echo "PROJ_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
-          echo "Project directory: $PROJECT_DIR"
-
-      - name: Patch Gradle Wrapper
+      # ═══════════════════════════════════════════════════════
+      # 🔧 PATCH WRAPPER — VERSI 8.14 (2 DIGIT)
+      # ═══════════════════════════════════════════════════════
+      - name: Patch Gradle Config
         env:
-          GRADLE_VERSION: "8.14.0"
+          GRADLE_VERSION: "8.14"
         shell: bash
         run: |
           set -Eeuo pipefail
 
           python3 << 'PY'
           import os
-          import re
           from pathlib import Path
 
           project = Path(os.environ["PROJ_DIR"])
           version = os.environ["GRADLE_VERSION"]
           official_url = f"https\\://services.gradle.org/distributions/gradle-{version}-bin.zip"
 
+          # 1. Patch semua wrapper
           wrappers = list(project.rglob("gradle-wrapper.properties"))
-          if not wrappers:
-              print("⚠️  Tidak ada gradle-wrapper.properties")
-              raise SystemExit(0)
-
-          print(f"📋 Ditemukan {len(wrappers)} file:")
           for w in wrappers:
-              print(f"   - {w.relative_to(project)}")
-
-          for wrapper in wrappers:
-              content = wrapper.read_text(encoding="utf-8")
-              lines = content.splitlines()
-              changed = False
+              content = w.read_text(encoding="utf-8")
               new_lines = []
-              has_distribution = False
-
-              for line in lines:
+              has_dist = False
+              for line in content.splitlines():
                   if line.startswith("distributionUrl="):
-                      has_distribution = True
+                      has_dist = True
                       new_lines.append(f"distributionUrl={official_url}")
-                      if line != f"distributionUrl={official_url}":
-                          changed = True
                   else:
                       new_lines.append(line)
-
-              if not has_distribution:
+              if not has_dist:
                   new_lines.append(f"distributionUrl={official_url}")
-                  changed = True
+              w.write_text("\n".join(new_lines) + "\n", encoding="utf-8")
+              print(f"✅ Patched: {w.relative_to(project)}")
 
-              if changed:
-                  wrapper.write_text("\n".join(new_lines) + "\n", encoding="utf-8")
-                  print(f"✅ Patched: {wrapper.relative_to(project)}")
+          # 2. Tambah gradle.properties untuk skip auto-upgrade
+          props = project / "android" / "gradle.properties"
+          extra = [
+              "",
+              "# CI Override",
+              "android.skipBuildDependencyValidation=true",
+              "android.newDsl=false",
+              "org.gradle.daemon=false",
+              "org.gradle.jvmargs=-Xmx4G -XX:MaxMetaspaceSize=1G",
+          ]
 
+          if props.is_file():
+              existing = props.read_text(encoding="utf-8")
+              for key in ["android.skipBuildDependencyValidation", "android.newDsl"]:
+                  existing = "\n".join(l for l in existing.splitlines() if not l.strip().startswith(key))
+              props.write_text(existing + "\n" + "\n".join(extra) + "\n", encoding="utf-8")
+              print("✅ Patched gradle.properties")
+          else:
+              props.parent.mkdir(parents=True, exist_ok=True)
+              props.write_text("\n".join(extra) + "\n", encoding="utf-8")
+              print("✅ Created gradle.properties")
           PY
 
       - name: Pub Get
         shell: bash
         run: |
-          set -Eeuo pipefail
           cd "$PROJ_DIR"
           flutter pub get
 
+      # ═══════════════════════════════════════════════════════
+      # 🔨 BUILD — Pakai flag skip validation
+      # ═══════════════════════════════════════════════════════
       - name: Build APK
         env:
           MODE: ${{ inputs.build_mode || 'release' }}
@@ -246,48 +236,26 @@ jobs:
         shell: bash
         run: |
           set -Eeuo pipefail
-
           cd "$PROJ_DIR"
-
-          # ═══════════════════════════════════════════════════════
-          # RE-PATCH SEBELUM BUILD (Flutter auto-upgrade bisa
-          # menimpa wrapper di sini, jadi kita patch terakhir kali)
-          # ═══════════════════════════════════════════════════════
-          cat > android/gradle/wrapper/gradle-wrapper.properties << 'GRADLE_EOF'
-          distributionBase=GRADLE_USER_HOME
-          distributionPath=wrapper/dists
-          distributionUrl=https\://services.gradle.org/distributions/gradle-8.14.0-bin.zip
-          zipStoreBase=GRADLE_USER_HOME
-          zipStorePath=wrapper/dists
-          GRADLE_EOF
-
-          # Hapus leading whitespace dari heredoc
-          sed -i 's/^[[:space:]]*//' android/gradle/wrapper/gradle-wrapper.properties
-
-          echo "📄 Wrapper sebelum build:"
-          cat android/gradle/wrapper/gradle-wrapper.properties
-
           MODE="${MODE:-release}"
-          echo "🎯 Mode: $MODE"
-
           mkdir -p output
 
           if [ "$MODE" = "analyze" ]; then
             flutter analyze > analysis-report.txt 2>&1 || true
             cp analysis-report.txt "output/${APP_NAME}-analysis.txt"
           else
-            flutter build apk --$MODE --no-pub
+            flutter build apk --$MODE \
+              --no-pub \
+              --android-skip-build-dependency-validation
 
             APK="build/app/outputs/flutter-apk/app-${MODE}.apk"
             if [ ! -f "$APK" ]; then
               APK="$(find build/app/outputs -name "*.apk" -print -quit)"
             fi
-
             if [ -z "$APK" ] || [ ! -f "$APK" ]; then
-              echo "::error::File APK tidak ditemukan."
+              echo "::error::APK tidak ditemukan."
               exit 1
             fi
-
             cp "$APK" "output/${APP_NAME}.apk"
           fi
 
@@ -302,7 +270,7 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
           fail_on_unmatched_files: true
 
-      - name: Cleanup Upload Release
+      - name: Cleanup
         if: ${{ always() && inputs.upload_tag != '' }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -311,33 +279,18 @@ jobs:
         shell: bash
         run: |
           set -uo pipefail
-
           API="https://api.github.com/repos/${REPOSITORY}/releases/tags/${UPLOAD_TAG}"
-          RESPONSE="$(curl -sS -w '\n%{http_code}' \
-            -H "Authorization: Bearer ${GH_TOKEN}" \
-            -H "Accept: application/vnd.github+json" \
-            "$API" || true)"
-
-          HTTP_CODE="$(printf '%s\n' "$RESPONSE" | tail -n 1)"
-          BODY="$(printf '%s\n' "$RESPONSE" | sed '$d')"
-
-          if [ "$HTTP_CODE" = "200" ]; then
-            RELEASE_ID="$(printf '%s' "$BODY" | python3 -c \
-              'import json,sys; print(json.load(sys.stdin).get("id", ""))')"
-
-            if [ -n "$RELEASE_ID" ]; then
-              curl -sS -o /dev/null -w '%{http_code}' \
-                -X DELETE \
-                -H "Authorization: Bearer ${GH_TOKEN}" \
-                -H "Accept: application/vnd.github+json" \
-                "https://api.github.com/repos/${REPOSITORY}/releases/${RELEASE_ID}" || true
-
-              curl -sS -o /dev/null -w '%{http_code}' \
-                -X DELETE \
-                -H "Authorization: Bearer ${GH_TOKEN}" \
-                -H "Accept: application/vnd.github+json" \
+          R="$(curl -sS -w '\n%{http_code}' -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H "Accept: application/vnd.github+json" "$API" || true)"
+          C="$(printf '%s\n' "$R" | tail -n 1)"
+          B="$(printf '%s\n' "$R" | sed '$d')"
+          if [ "$C" = "200" ]; then
+            ID="$(printf '%s' "$B" | python3 -c 'import json,sys;print(json.load(sys.stdin).get("id",""))')"
+            if [ -n "$ID" ]; then
+              curl -sS -o /dev/null -X DELETE -H "Authorization: Bearer ${GH_TOKEN}" \
+                "https://api.github.com/repos/${REPOSITORY}/releases/${ID}" || true
+              curl -sS -o /dev/null -X DELETE -H "Authorization: Bearer ${GH_TOKEN}" \
                 "https://api.github.com/repos/${REPOSITORY}/git/refs/tags/${UPLOAD_TAG}" || true
             fi
           fi
-
-          echo "Cleanup selesai."
+          echo "Cleanup done."
