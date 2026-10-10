@@ -1,54 +1,38 @@
-name: Build Flutter Project
+name: Build Flutter APK
 
 on:
   workflow_dispatch:
     inputs:
       zip_url:
-        description: Public GitHub Release URL for the uploaded project ZIP
+        description: "URL download ZIP"
         required: true
         type: string
       app_name:
-        description: APK/report filename without extension
+        description: "Nama APK"
         required: true
         type: string
       user_id:
-        description: Telegram user ID
+        description: "Telegram user ID"
         required: true
         type: string
       upload_tag:
-        description: Temporary ZIP release tag to delete after processing
+        description: "Tag release upload sementara"
         required: false
         type: string
         default: ""
-      build_mode:
-        description: Build mode selected in Telegram
-        required: true
-        type: choice
-        options:
-          - release
-          - debug
-          - analyze
-        default: release
-      flutter_version:
-        description: Use stable or an exact Flutter version such as 3.29.3
-        required: false
-        type: string
-        default: stable
 
-run-name: web2apk-${{ inputs.build_mode }}-${{ inputs.user_id }}-${{ github.run_number }}
+run-name: build-${{ inputs.user_id }}-${{ github.run_number }}
 
 permissions:
   contents: write
-
-env:
-  CI: "true"
 
 jobs:
   build:
     runs-on: ubuntu-latest
     timeout-minutes: 60
+
     steps:
-      - name: Checkout workflow repository
+      - name: Checkout
         uses: actions/checkout@v4
 
       - name: Setup Java
@@ -57,131 +41,246 @@ jobs:
           distribution: zulu
           java-version: "17"
 
-      # `flutter-version: stable` is invalid in some action versions. Let the
-      # stable channel resolve latest stable; only pass flutter-version for an exact version.
-      - name: Setup latest stable Flutter
-        if: ${{ inputs.flutter_version == '' || inputs.flutter_version == 'stable' }}
+      - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
+          flutter-version: "3.24.0"
           channel: stable
-          cache: true
-
-      - name: Setup selected Flutter version
-        if: ${{ inputs.flutter_version != '' && inputs.flutter_version != 'stable' }}
-        uses: subosito/flutter-action@v2
-        with:
-          flutter-version: ${{ inputs.flutter_version }}
-          channel: any
           cache: true
 
       - name: Download ZIP
         env:
           ZIP_URL: ${{ inputs.zip_url }}
+        shell: bash
         run: |
-          set -euo pipefail
-          curl --fail --location --show-error --retry 5 --retry-delay 5 --retry-all-errors --max-filesize 314572800 "$ZIP_URL" -o project.zip
-          test -s project.zip
-          ls -lah project.zip
+          set -Eeuo pipefail
 
-      - name: Extract project
+          for i in 1 2 3 4 5; do
+            if curl -fL \
+              --retry 3 \
+              --retry-delay 3 \
+              --retry-all-errors \
+              --connect-timeout 30 \
+              -o project.zip "$ZIP_URL"; then
+              break
+            fi
+
+            if [ "$i" -eq 5 ]; then
+              echo "::error::Gagal mengunduh ZIP."
+              exit 1
+            fi
+
+            sleep 5
+          done
+
+          test -s project.zip
+          unzip -tq project.zip
+          ls -lh project.zip
+
+      - name: Extract Project
+        shell: bash
         run: |
-          set -euo pipefail
+          set -Eeuo pipefail
+
           mkdir -p _proj
           unzip -q project.zip -d _proj
-          PUB="$(find _proj -maxdepth 8 -type f -name pubspec.yaml -print -quit)"
+
+          PUB="$(find _proj -maxdepth 8 \
+            -type f -name pubspec.yaml -print -quit)"
+
           if [ -z "$PUB" ]; then
-            echo "::error::ZIP tidak berisi pubspec.yaml pada kedalaman yang didukung"
+            echo "::error::ZIP tidak berisi pubspec.yaml."
             exit 1
           fi
-          echo "PROJ_DIR=$(dirname "$PUB")" >> "$GITHUB_ENV"
 
-      - name: Flutter pub get
+          PROJECT_DIR="$(dirname "$PUB")"
+          echo "PROJ_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
+
+          echo "Project ditemukan: $PROJECT_DIR"
+
+      # Patch hanya Gradle Wrapper pada runner.
+      # Versi Gradle dipilih melalui variabel GRADLE_VERSION.
+      - name: Patch Gradle Wrapper (CI Only)
+        env:
+          GRADLE_VERSION: "8.14.0"
+        shell: bash
         run: |
-          set -euo pipefail
-          cd "$PROJ_DIR"
+          set -Eeuo pipefail
+
+          python3 - <<'PY'
+          import os
+          import re
+          from pathlib import Path
+
+          project = Path(os.environ["PROJ_DIR"])
+          version = os.environ["GRADLE_VERSION"]
+          wrapper = project / "android/gradle/wrapper/gradle-wrapper.properties"
+
+          if not re.fullmatch(r"\d+\.\d+(?:\.\d+)?", version):
+              raise SystemExit("GRADLE_VERSION tidak valid.")
+
+          if not wrapper.is_file():
+              raise SystemExit(
+                  f"Gradle Wrapper tidak ditemukan: {wrapper}"
+              )
+
+          content = wrapper.read_text(encoding="utf-8")
+          pattern = r"(?m)^distributionUrl=.*$"
+          match = re.search(pattern, content)
+
+          if not match:
+              raise SystemExit("distributionUrl tidak ditemukan.")
+
+          line = match.group(0)
+
+          if not re.search(r"gradle-[^/]+\.zip", line):
+              raise SystemExit(
+                  f"Format distributionUrl tidak dikenali: {line}"
+              )
+
+          updated, count = re.subn(
+              r"gradle-[^/]+\.zip",
+              lambda m: re.sub(
+                  r"gradle-[^/]+\.zip",
+                  f"gradle-{version}-bin.zip",
+                  m.group(0),
+              ),
+              line,
+              count=1,
+          )
+
+          if count != 1:
+              raise SystemExit("Gagal memperbarui distributionUrl.")
+
+          content = content[:match.start()] + updated + content[match.end():]
+          wrapper.write_text(content, encoding="utf-8")
+
+          print(f"Gradle Wrapper CI: {updated}")
+          PY
+
+          cat "$PROJ_DIR/android/gradle/wrapper/gradle-wrapper.properties"
+
+      - name: Flutter Version Check
+        shell: bash
+        run: |
+          set -Eeuo pipefail
           flutter --version
+          cd "$PROJ_DIR"
+          flutter doctor -v
+
+      - name: Pub Get
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cd "$PROJ_DIR"
           flutter pub get
 
-      - name: Run Flutter analyze
-        if: ${{ inputs.build_mode == 'analyze' }}
-        run: |
-          set -uo pipefail
-          cd "$PROJ_DIR"
-          mkdir -p "$GITHUB_WORKSPACE/output"
-          set +e
-          flutter analyze --no-pub > "$GITHUB_WORKSPACE/output/analysis-report.txt" 2>&1
-          ANALYZE_EXIT=$?
-          set -e
-          {
-            echo "Web2APK Flutter Analysis Report"
-            echo "Mode: analyze"
-            echo "Flutter version: $(flutter --version | head -n 1)"
-            echo "Exit code: $ANALYZE_EXIT"
-            echo "Generated: $(date -u +'%Y-%m-%d %H:%M:%S UTC')"
-            echo "=================================================="
-            cat "$GITHUB_WORKSPACE/output/analysis-report.txt"
-          } > "$GITHUB_WORKSPACE/output/analysis-report.tmp"
-          mv "$GITHUB_WORKSPACE/output/analysis-report.tmp" "$GITHUB_WORKSPACE/output/analysis-report.txt"
-          # Findings are delivered as a report; analyzer findings do not suppress the report upload.
-          echo "Flutter analyze completed with exit code $ANALYZE_EXIT"
-
       - name: Build Release APK
-        if: ${{ inputs.build_mode == 'release' }}
+        shell: bash
         run: |
-          set -euo pipefail
+          set -Eeuo pipefail
           cd "$PROJ_DIR"
           flutter build apk --release
 
-      - name: Build Debug APK
-        if: ${{ inputs.build_mode == 'debug' }}
-        run: |
-          set -euo pipefail
-          cd "$PROJ_DIR"
-          flutter build apk --debug
-
-      - name: Prepare APK output
-        if: ${{ inputs.build_mode == 'release' || inputs.build_mode == 'debug' }}
+      - name: Prepare Output
         env:
           APP_NAME: ${{ inputs.app_name }}
-          BUILD_MODE: ${{ inputs.build_mode }}
+        shell: bash
         run: |
-          set -euo pipefail
-          mkdir -p output
-          SAFE_NAME="$(printf '%s' "$APP_NAME" | tr -cd '[:alnum:]_.-' | cut -c1-80)"
-          [ -n "$SAFE_NAME" ] || SAFE_NAME="app"
-          if [ "$BUILD_MODE" = "debug" ]; then
-            SOURCE="$PROJ_DIR/build/app/outputs/flutter-apk/app-debug.apk"
-            DEST="output/${SAFE_NAME}-debug.apk"
-          else
-            SOURCE="$PROJ_DIR/build/app/outputs/flutter-apk/app-release.apk"
-            DEST="output/${SAFE_NAME}-release.apk"
-          fi
-          test -s "$SOURCE"
-          cp "$SOURCE" "$DEST"
-          ls -lah "$DEST"
+          set -Eeuo pipefail
 
-      - name: Publish result release
+          APK="$PROJ_DIR/build/app/outputs/flutter-apk/app-release.apk"
+
+          if [ ! -f "$APK" ]; then
+            echo "::error::APK hasil build tidak ditemukan."
+            exit 1
+          fi
+
+          mkdir -p output
+
+          SAFE_NAME="$(
+            printf '%s' "$APP_NAME" |
+              tr '/\\' '__' |
+              tr -cd '[:alnum:] ._-'
+          )"
+
+          SAFE_NAME="$(printf '%s' "$SAFE_NAME" | xargs)"
+
+          if [ -z "$SAFE_NAME" ]; then
+            SAFE_NAME="app"
+          fi
+
+          cp "$APK" "output/${SAFE_NAME}.apk"
+          ls -lh output/
+
+      - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: build-${{ inputs.user_id }}-${{ github.run_number }}
-          name: "Web2APK ${{ inputs.build_mode }} - ${{ inputs.app_name }} #${{ github.run_number }}"
-          body: "Generated by Web2APK Builder. Mode: ${{ inputs.build_mode }}"
-          files: output/*
+          name: "${{ inputs.app_name }} #${{ github.run_number }}"
+          files: output/*.apk
           token: ${{ secrets.GITHUB_TOKEN }}
+          fail_on_unmatched_files: true
 
-      - name: Cleanup temporary ZIP release
+      - name: Cleanup Upload Release
         if: ${{ always() && inputs.upload_tag != '' }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          REPO: ${{ github.repository }}
+          REPOSITORY: ${{ github.repository }}
           UPLOAD_TAG: ${{ inputs.upload_tag }}
         shell: bash
         run: |
-          set -euo pipefail
-          API="https://api.github.com/repos/$REPO"
-          RELEASE_JSON="$(curl --silent --show-error --fail -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" "$API/releases/tags/$UPLOAD_TAG" || true)"
-          RELEASE_ID="$(printf '%s' "$RELEASE_JSON" | jq -r '.id // empty' 2>/dev/null || true)"
-          if [ -n "$RELEASE_ID" ]; then
-            curl --silent --show-error --fail-with-body -X DELETE -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" "$API/releases/$RELEASE_ID" || true
+          set -uo pipefail
+
+          API="https://api.github.com/repos/${REPOSITORY}/releases/tags/${UPLOAD_TAG}"
+
+          RESPONSE="$(curl -sS -w '\n%{http_code}' \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            "$API" || true)"
+
+          HTTP_CODE="$(printf '%s\n' "$RESPONSE" | tail -n 1)"
+          BODY="$(printf '%s\n' "$RESPONSE" | sed '$d')"
+
+          if [ "$HTTP_CODE" = "200" ]; then
+            RELEASE_ID="$(
+              printf '%s' "$BODY" |
+                python3 -c \
+                'import json,sys; print(json.load(sys.stdin).get("id", ""))'
+            )"
+
+            if [ -n "$RELEASE_ID" ]; then
+              DELETE_RELEASE_CODE="$(
+                curl -sS -o /dev/null -w '%{http_code}' \
+                  -X DELETE \
+                  -H "Authorization: Bearer ${GH_TOKEN}" \
+                  -H "Accept: application/vnd.github+json" \
+                  "https://api.github.com/repos/${REPOSITORY}/releases/${RELEASE_ID}" \
+                  || true
+              )"
+
+              if [ "$DELETE_RELEASE_CODE" != "204" ]; then
+                echo "::warning::Gagal menghapus release sementara. HTTP ${DELETE_RELEASE_CODE}"
+              fi
+
+              DELETE_TAG_CODE="$(
+                curl -sS -o /dev/null -w '%{http_code}' \
+                  -X DELETE \
+                  -H "Authorization: Bearer ${GH_TOKEN}" \
+                  -H "Accept: application/vnd.github+json" \
+                  "https://api.github.com/repos/${REPOSITORY}/git/refs/tags/${UPLOAD_TAG}" \
+                  || true
+              )"
+
+              if [ "$DELETE_TAG_CODE" != "204" ] &&
+                 [ "$DELETE_TAG_CODE" != "404" ]; then
+                echo "::warning::Gagal menghapus tag sementara. HTTP ${DELETE_TAG_CODE}"
+              fi
+            fi
+          elif [ "$HTTP_CODE" = "404" ]; then
+            echo "Release sementara tidak ditemukan; cleanup dilewati."
+          else
+            echo "::warning::Cleanup gagal. HTTP ${HTTP_CODE}"
           fi
-          curl --silent --show-error --fail-with-body -X DELETE -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" "$API/git/refs/tags/$UPLOAD_TAG" || true
+
+          echo "Cleanup selesai."
