@@ -47,8 +47,7 @@ jobs:
           java-version: "17"
 
       # ═══════════════════════════════════════════════════════════
-      # 🔑 Flutter 3.35.0 — support Dart 3.8.0+ (project modern)
-      # Kompatibel dengan Gradle 8.14.0 (auto-patch di bawah)
+      # 🔑 Flutter 3.35.0 — Dart 3.9.0 (support project modern)
       # ═══════════════════════════════════════════════════════════
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
@@ -111,6 +110,12 @@ jobs:
           echo "PROJ_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
           echo "Project directory: $PROJECT_DIR"
 
+      # ═══════════════════════════════════════════════════════════
+      # 🔧 PATCH SEMUA gradle-wrapper.properties
+      # - Force URL resmi: https://services.gradle.org/...
+      # - Force versi: 8.14.0
+      # - Handle file di manapun di project
+      # ═══════════════════════════════════════════════════════════
       - name: Patch Gradle Wrapper (CI Only)
         env:
           GRADLE_VERSION: "8.14.0"
@@ -125,41 +130,62 @@ jobs:
 
           project = Path(os.environ["PROJ_DIR"])
           version = os.environ["GRADLE_VERSION"]
-          wrapper = project / "android/gradle/wrapper/gradle-wrapper.properties"
+          official_url = f"https\\://services.gradle.org/distributions/gradle-{version}-bin.zip"
 
-          if not wrapper.is_file():
-              print("⚠️ Gradle Wrapper tidak ditemukan; skip patch.")
+          # Cari SEMUA gradle-wrapper.properties di project
+          wrappers = list(project.rglob("gradle-wrapper.properties"))
+
+          if not wrappers:
+              print("⚠️  Tidak ada gradle-wrapper.properties; skip patch.")
               raise SystemExit(0)
 
-          content = wrapper.read_text(encoding="utf-8")
-          pattern = r"(?m)^distributionUrl=.*$"
-          match = re.search(pattern, content)
+          print(f"📋 Ditemukan {len(wrappers)} file gradle-wrapper.properties:")
+          for w in wrappers:
+              print(f"   - {w.relative_to(project)}")
+          print()
 
-          if not match:
-              print("⚠️ distributionUrl tidak ditemukan; skip patch.")
-              raise SystemExit(0)
+          for wrapper in wrappers:
+              try:
+                  content = wrapper.read_text(encoding="utf-8")
+              except Exception as e:
+                  print(f"⚠️  Gagal baca {wrapper}: {e}")
+                  continue
 
-          line = match.group(0)
+              lines = content.splitlines()
+              changed = False
+              new_lines = []
+              has_distribution = False
 
-          updated, count = re.subn(
-              r"gradle-[0-9]+\.[0-9]+(?:\.[0-9]+)?-(all|bin)\.zip",
-              f"gradle-{version}-bin.zip",
-              line,
-              count=1,
-          )
+              for line in lines:
+                  if line.startswith("distributionUrl="):
+                      has_distribution = True
+                      new_lines.append(f"distributionUrl={official_url}")
+                      if line != f"distributionUrl={official_url}":
+                          changed = True
+                          print(f"🔧 Patch: {wrapper.relative_to(project)}")
+                          print(f"   OLD: {line}")
+                          print(f"   NEW: distributionUrl={official_url}")
+                  else:
+                      new_lines.append(line)
 
-          if count == 1 and updated != line:
-              content = content[:match.start()] + updated + content[match.end():]
-              wrapper.write_text(content, encoding="utf-8")
-              print(f"✅ Gradle Wrapper diperbarui: {updated}")
-          elif f"gradle-{version}-" in line:
-              print(f"ℹ️ Gradle Wrapper sudah {version}; tidak perlu patch.")
-          else:
-              print(f"⚠️ Format tidak dikenali: {line}")
-              print("   → Lanjut build dengan versi existing.")
+              # Kalau belum ada distributionUrl sama sekali
+              if not has_distribution:
+                  new_lines.append(f"distributionUrl={official_url}")
+                  changed = True
+                  print(f"➕ Tambah distributionUrl di {wrapper.relative_to(project)}")
 
-          print("\n📄 Isi wrapper sekarang:")
-          print(wrapper.read_text(encoding="utf-8"))
+              if changed:
+                  wrapper.write_text("\n".join(new_lines) + "\n", encoding="utf-8")
+                  print(f"✅ Tersimpan: {wrapper.relative_to(project)}")
+              else:
+                  print(f"ℹ️  Sudah benar: {wrapper.relative_to(project)}")
+
+          print("\n📄 Verifikasi isi wrapper pertama:")
+          first = wrappers[0]
+          print(f"File: {first.relative_to(project)}")
+          for line in first.read_text(encoding="utf-8").splitlines():
+              if "distributionUrl" in line:
+                  print(f"  → {line}")
           PY
 
       - name: Flutter Version Check
