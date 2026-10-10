@@ -46,15 +46,87 @@ jobs:
           distribution: zulu
           java-version: "17"
 
-      # ═══════════════════════════════════════════════════════════
-      # 🔑 Flutter 3.35.0 — Dart 3.9.0 (support project modern)
-      # ═══════════════════════════════════════════════════════════
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
           flutter-version: "3.35.0"
           channel: stable
           cache: true
+
+      # ═══════════════════════════════════════════════════════════
+      # 🔑 PRE-CACHE GRADLE 8.14.0
+      # Flutter auto-upgrade akan pakai URL github.com/gradle/...
+      # yang 404. Kita pre-cache di folder Gradle wrapper supaya
+      # meskipun URL salah, Gradle pakai cache lokal.
+      # ═══════════════════════════════════════════════════════════
+      - name: Pre-cache Gradle 8.14.0
+        shell: bash
+        run: |
+          set -uo pipefail
+
+          python3 << 'PYEOF' || echo "⚠️ Pre-cache gagal, lanjut build"
+          import hashlib
+          import os
+          import urllib.request
+          import zipfile
+
+          VERSION = "8.14.0"
+          REAL_URL = f"https://services.gradle.org/distributions/gradle-{VERSION}-bin.zip"
+
+          # Semua URL yang mungkin Flutter tulis di wrapper
+          CANDIDATE_URLS = [
+              f"https://github.com/gradle/gradle-distributions/releases/download/v{VERSION}/gradle-{VERSION}-bin.zip",
+              f"https://services.gradle.org/distributions/gradle-{VERSION}-bin.zip",
+          ]
+
+          def to_base36(n):
+              if n == 0: return '0'
+              chars = '0123456789abcdefghijklmnopqrstuvwxyz'
+              result = ''
+              while n > 0:
+                  result = chars[n % 36] + result
+                  n //= 36
+              return result
+
+          def url_hash(url):
+              md5_bytes = hashlib.md5(url.encode('utf-8')).digest()
+              return to_base36(int.from_bytes(md5_bytes, 'big'))
+
+          home = os.path.expanduser("~")
+          dists_root = os.path.join(home, ".gradle", "wrapper", "dists", f"gradle-{VERSION}-bin")
+          os.makedirs(dists_root, exist_ok=True)
+
+          cache_dir = "/tmp/gradle-cache"
+          os.makedirs(cache_dir, exist_ok=True)
+          zip_path = os.path.join(cache_dir, f"gradle-{VERSION}-bin.zip")
+
+          if not os.path.exists(zip_path) or os.path.getsize(zip_path) < 1000000:
+              print(f"📥 Downloading Gradle {VERSION}...")
+              urllib.request.urlretrieve(REAL_URL, zip_path)
+              print(f"✅ Downloaded {os.path.getsize(zip_path)} bytes")
+
+          for url in CANDIDATE_URLS:
+              h = url_hash(url)
+              target = os.path.join(dists_root, h)
+              extracted = os.path.join(target, f"gradle-{VERSION}")
+
+              if os.path.isdir(extracted):
+                  print(f"ℹ️  Already cached: {h}")
+                  continue
+
+              os.makedirs(target, exist_ok=True)
+              print(f"📦 Caching for URL: {url[:70]}...")
+              with zipfile.ZipFile(zip_path, 'r') as z:
+                  z.extractall(target)
+
+              open(os.path.join(target, f"gradle-{VERSION}-bin.zip.ok"), 'w').close()
+              open(os.path.join(target, f"gradle-{VERSION}-bin.zip.lck"), 'w').close()
+              print(f"✅ Cached: {h}")
+
+          print("\n📂 Cache folder:")
+          for d in sorted(os.listdir(dists_root)):
+              print(f"   {d}")
+          PYEOF
 
       - name: Download ZIP
         env:
@@ -80,10 +152,9 @@ jobs:
             fi
 
             if [ "$i" -eq 5 ]; then
-              echo "::error::Gagal mengunduh ZIP setelah 5 percobaan."
+              echo "::error::Gagal mengunduh ZIP."
               exit 1
             fi
-
             sleep 5
           done
 
@@ -110,20 +181,14 @@ jobs:
           echo "PROJ_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
           echo "Project directory: $PROJECT_DIR"
 
-      # ═══════════════════════════════════════════════════════════
-      # 🔧 PATCH SEMUA gradle-wrapper.properties
-      # - Force URL resmi: https://services.gradle.org/...
-      # - Force versi: 8.14.0
-      # - Handle file di manapun di project
-      # ═══════════════════════════════════════════════════════════
-      - name: Patch Gradle Wrapper (CI Only)
+      - name: Patch Gradle Wrapper
         env:
           GRADLE_VERSION: "8.14.0"
         shell: bash
         run: |
           set -Eeuo pipefail
 
-          python3 - <<'PY'
+          python3 << 'PY'
           import os
           import re
           from pathlib import Path
@@ -132,25 +197,17 @@ jobs:
           version = os.environ["GRADLE_VERSION"]
           official_url = f"https\\://services.gradle.org/distributions/gradle-{version}-bin.zip"
 
-          # Cari SEMUA gradle-wrapper.properties di project
           wrappers = list(project.rglob("gradle-wrapper.properties"))
-
           if not wrappers:
-              print("⚠️  Tidak ada gradle-wrapper.properties; skip patch.")
+              print("⚠️  Tidak ada gradle-wrapper.properties")
               raise SystemExit(0)
 
-          print(f"📋 Ditemukan {len(wrappers)} file gradle-wrapper.properties:")
+          print(f"📋 Ditemukan {len(wrappers)} file:")
           for w in wrappers:
               print(f"   - {w.relative_to(project)}")
-          print()
 
           for wrapper in wrappers:
-              try:
-                  content = wrapper.read_text(encoding="utf-8")
-              except Exception as e:
-                  print(f"⚠️  Gagal baca {wrapper}: {e}")
-                  continue
-
+              content = wrapper.read_text(encoding="utf-8")
               lines = content.splitlines()
               changed = False
               new_lines = []
@@ -162,39 +219,18 @@ jobs:
                       new_lines.append(f"distributionUrl={official_url}")
                       if line != f"distributionUrl={official_url}":
                           changed = True
-                          print(f"🔧 Patch: {wrapper.relative_to(project)}")
-                          print(f"   OLD: {line}")
-                          print(f"   NEW: distributionUrl={official_url}")
                   else:
                       new_lines.append(line)
 
-              # Kalau belum ada distributionUrl sama sekali
               if not has_distribution:
                   new_lines.append(f"distributionUrl={official_url}")
                   changed = True
-                  print(f"➕ Tambah distributionUrl di {wrapper.relative_to(project)}")
 
               if changed:
                   wrapper.write_text("\n".join(new_lines) + "\n", encoding="utf-8")
-                  print(f"✅ Tersimpan: {wrapper.relative_to(project)}")
-              else:
-                  print(f"ℹ️  Sudah benar: {wrapper.relative_to(project)}")
+                  print(f"✅ Patched: {wrapper.relative_to(project)}")
 
-          print("\n📄 Verifikasi isi wrapper pertama:")
-          first = wrappers[0]
-          print(f"File: {first.relative_to(project)}")
-          for line in first.read_text(encoding="utf-8").splitlines():
-              if "distributionUrl" in line:
-                  print(f"  → {line}")
           PY
-
-      - name: Flutter Version Check
-        shell: bash
-        run: |
-          set -Eeuo pipefail
-          flutter --version
-          cd "$PROJ_DIR"
-          flutter doctor -v
 
       - name: Pub Get
         shell: bash
@@ -203,7 +239,7 @@ jobs:
           cd "$PROJ_DIR"
           flutter pub get
 
-      - name: Build (Release / Debug / Analyze)
+      - name: Build APK
         env:
           MODE: ${{ inputs.build_mode || 'release' }}
           APP_NAME: ${{ inputs.app_name }}
@@ -212,34 +248,49 @@ jobs:
           set -Eeuo pipefail
 
           cd "$PROJ_DIR"
+
+          # ═══════════════════════════════════════════════════════
+          # RE-PATCH SEBELUM BUILD (Flutter auto-upgrade bisa
+          # menimpa wrapper di sini, jadi kita patch terakhir kali)
+          # ═══════════════════════════════════════════════════════
+          cat > android/gradle/wrapper/gradle-wrapper.properties << 'GRADLE_EOF'
+          distributionBase=GRADLE_USER_HOME
+          distributionPath=wrapper/dists
+          distributionUrl=https\://services.gradle.org/distributions/gradle-8.14.0-bin.zip
+          zipStoreBase=GRADLE_USER_HOME
+          zipStorePath=wrapper/dists
+          GRADLE_EOF
+
+          # Hapus leading whitespace dari heredoc
+          sed -i 's/^[[:space:]]*//' android/gradle/wrapper/gradle-wrapper.properties
+
+          echo "📄 Wrapper sebelum build:"
+          cat android/gradle/wrapper/gradle-wrapper.properties
+
           MODE="${MODE:-release}"
           echo "🎯 Mode: $MODE"
 
           mkdir -p output
 
           if [ "$MODE" = "analyze" ]; then
-            echo "🔎 Menjalankan flutter analyze..."
             flutter analyze > analysis-report.txt 2>&1 || true
             cp analysis-report.txt "output/${APP_NAME}-analysis.txt"
           else
-            echo "🔨 Building APK mode: $MODE"
-            flutter build apk --$MODE
+            flutter build apk --$MODE --no-pub
 
             APK="build/app/outputs/flutter-apk/app-${MODE}.apk"
-
             if [ ! -f "$APK" ]; then
               APK="$(find build/app/outputs -name "*.apk" -print -quit)"
             fi
 
             if [ -z "$APK" ] || [ ! -f "$APK" ]; then
-              echo "::error::File APK tidak ditemukan setelah build."
+              echo "::error::File APK tidak ditemukan."
               exit 1
             fi
 
             cp "$APK" "output/${APP_NAME}.apk"
           fi
 
-          echo "📦 Output:"
           ls -lh output/
 
       - name: Create Release
@@ -262,7 +313,6 @@ jobs:
           set -uo pipefail
 
           API="https://api.github.com/repos/${REPOSITORY}/releases/tags/${UPLOAD_TAG}"
-
           RESPONSE="$(curl -sS -w '\n%{http_code}' \
             -H "Authorization: Bearer ${GH_TOKEN}" \
             -H "Accept: application/vnd.github+json" \
@@ -272,31 +322,22 @@ jobs:
           BODY="$(printf '%s\n' "$RESPONSE" | sed '$d')"
 
           if [ "$HTTP_CODE" = "200" ]; then
-            RELEASE_ID="$(
-              printf '%s' "$BODY" |
-                python3 -c \
-                'import json,sys; print(json.load(sys.stdin).get("id", ""))'
-            )"
+            RELEASE_ID="$(printf '%s' "$BODY" | python3 -c \
+              'import json,sys; print(json.load(sys.stdin).get("id", ""))')"
 
             if [ -n "$RELEASE_ID" ]; then
               curl -sS -o /dev/null -w '%{http_code}' \
                 -X DELETE \
                 -H "Authorization: Bearer ${GH_TOKEN}" \
                 -H "Accept: application/vnd.github+json" \
-                "https://api.github.com/repos/${REPOSITORY}/releases/${RELEASE_ID}" \
-                || true
+                "https://api.github.com/repos/${REPOSITORY}/releases/${RELEASE_ID}" || true
 
               curl -sS -o /dev/null -w '%{http_code}' \
                 -X DELETE \
                 -H "Authorization: Bearer ${GH_TOKEN}" \
                 -H "Accept: application/vnd.github+json" \
-                "https://api.github.com/repos/${REPOSITORY}/git/refs/tags/${UPLOAD_TAG}" \
-                || true
+                "https://api.github.com/repos/${REPOSITORY}/git/refs/tags/${UPLOAD_TAG}" || true
             fi
-          elif [ "$HTTP_CODE" = "404" ]; then
-            echo "Release sementara tidak ditemukan; cleanup dilewati."
-          else
-            echo "::warning::Cleanup gagal. HTTP ${HTTP_CODE}"
           fi
 
           echo "Cleanup selesai."
