@@ -27,13 +27,11 @@ local OPAH_IDS = {
     [91246277860636] = true,
 }
 
--- Atok 1 (drawer map)
 local ATOK_IDS = {
     [104798140293332] = true,
     [88236825351515] = true,
 }
 
--- Atok 2 (tape / pita map)
 local ATOK_TAPE_IDS = {
     [118060380845440] = true,
 }
@@ -73,10 +71,8 @@ end
 
 local IsAtok = MapMode == "Atok"
 
--- Atok 1: fixed safe zone position
 local ATOK_SAFE_POS = Vector3.new(-265.1, 17.3, 135.2)
 
--- Atok 2: safe zone = where you spawned when the script started
 local SpawnCFrame
 if AtokTape then
     task.spawn(function()
@@ -98,7 +94,6 @@ local function NameHasSafe(name)
     return false
 end
 
--- Access level (chosen on the launch screen)
 local VIP_PASSWORD = "911"
 local IsVip = false
 
@@ -108,7 +103,7 @@ for _, name in ipairs({ "YvoneHub", "YvoneLoading", "YvoneWarning" }) do
 end
 
 --==============================================================
--- VIP KEY VERIFICATION (raw GitHub read only, no HWID binding)
+-- VIP KEY VERIFICATION
 --==============================================================
 
 local VIP_KEYS_URL = "https://raw.githubusercontent.com/SaXyeeBARZ/xxxcrotx-functionx/refs/heads/main/key.json"
@@ -1097,6 +1092,23 @@ local function ApplyESPFlags()
     end
 end
 
+-- ⚠️ FIX: IsInsideDrawer HARUS didefinisikan SEBELUM ScanESP.
+-- Di versi lama, fungsi ini ada di section TARGETS (di bawah), sehingga
+-- ScanESP memanggil nil → runtime error.
+-- true kalau inst berada di dalam Model/Part bernama "drawer" (ancestor chain).
+local function IsInsideDrawer(inst)
+    local n = inst.Parent
+    while n and n ~= Workspace do
+        if (n:IsA("Model") or n:IsA("BasePart")) then
+            if string.find(string.lower(n.Name), "drawer", 1, true) then
+                return true
+            end
+        end
+        n = n.Parent
+    end
+    return false
+end
+
 local function ScanESP()
     if not (State.ESP_Opah or State.ESP_Item or State.ESP_Drawer) then return end
     local root = Root()
@@ -1104,16 +1116,16 @@ local function ScanESP()
     local char = Character()
 
     for _, inst in ipairs(Workspace:GetDescendants()) do
-    if not ESPObjects[inst] and not (char and inst:IsDescendantOf(char)) then
-        local cat = Classify(inst)
-        if cat and CategoryEnabled(cat) and not IsInsideDrawer(inst) then
-            local part = GetPart(inst)
-            if part and (root.Position - part.Position).Magnitude <= MAX_DISTANCE then
-                CreateESP(inst)
+        if not ESPObjects[inst] and not (char and inst:IsDescendantOf(char)) then
+            local cat = Classify(inst)
+            if cat and CategoryEnabled(cat) and not IsInsideDrawer(inst) then
+                local part = GetPart(inst)
+                if part and (root.Position - part.Position).Magnitude <= MAX_DISTANCE then
+                    CreateESP(inst)
+                end
             end
         end
     end
-end
 end
 
 local function RefreshESP()
@@ -1216,20 +1228,8 @@ local function InSafeZone(part, zones)
     return false
 end
 
--- true kalau inst berada di dalam Model bernama "drawer" (ancestor chain).
--- Key/note yang masih "di dalam" drawer tidak akan di-ESP / di-teleport.
-local function IsInsideDrawer(inst)
-    local n = inst.Parent
-    while n and n ~= Workspace do
-        if (n:IsA("Model") or n:IsA("BasePart")) then
-            if string.find(string.lower(n.Name), "drawer", 1, true) then
-                return true
-            end
-        end
-        n = n.Parent
-    end
-    return false
-end
+-- NOTE: IsInsideDrawer sudah dideklarasikan di atas (sebelum ScanESP).
+-- Tidak perlu dideklarasikan ulang di sini.
 
 local function RefreshTargets()
     if os.clock() - TargetCache.Time < 2 then return end
@@ -1265,14 +1265,14 @@ local function RefreshTargets()
                     end
                 end
             else
-    local cat = GetCategory(inst.Name)
-    if cat and cat ~= "OPAH" then
-        local part = GetPart(inst)
-        if part and not IsInsideDrawer(inst) then
-            table.insert(found, { Part = part, Cat = cat })
-        end
-    end
-end
+                local cat = GetCategory(inst.Name)
+                if cat and cat ~= "OPAH" then
+                    local part = GetPart(inst)
+                    if part and not IsInsideDrawer(inst) then
+                        table.insert(found, { Part = part, Cat = cat })
+                    end
+                end
+            end
         end
     end
 
@@ -1505,7 +1505,6 @@ local function PlaceAt(pos, label)
     return TeleportCF(CFrame.new(pos + Vector3.new(0, 4, 0)), label)
 end
 
--- Instant teleport (tanpa overlay 2 detik) — dipakai safe zone
 local function TeleportCFInstant(cf)
     local r = Root()
     if not r then return false end
@@ -1518,8 +1517,6 @@ local function PlaceAtInstant(pos)
     return TeleportCFInstant(CFrame.new(pos + Vector3.new(0, 4, 0)))
 end
 
--- true kalau ada objek bernama "opah" dalam radius tertentu dari player.
--- HANYA berlaku di map Opah — di map Atok selalu false.
 local function IsNearOpah(radius)
     if not IsOpahMap then return false end
     local root = Root()
@@ -3215,19 +3212,19 @@ local function Launch()
         if not nameOk then return end
 
         task.delay(0.3, function()
-    if not MainGui or not MainGui.Parent then return end
-    if not inst.Parent or ESPObjects[inst] then return end
+            if not MainGui or not MainGui.Parent then return end
+            if not inst.Parent or ESPObjects[inst] then return end
 
-    local cat = Classify(inst)
-    if not cat or not CategoryEnabled(cat) then return end
-    if IsInsideDrawer(inst) then return end
+            local cat = Classify(inst)
+            if not cat or not CategoryEnabled(cat) then return end
+            if IsInsideDrawer(inst) then return end
 
-    local root = Root()
-    local part = GetPart(inst)
-    if root and part and (root.Position - part.Position).Magnitude <= MAX_DISTANCE then
-        CreateESP(inst)
-    end
-end)
+            local root = Root()
+            local part = GetPart(inst)
+            if root and part and (root.Position - part.Position).Magnitude <= MAX_DISTANCE then
+                CreateESP(inst)
+            end
+        end)
     end))
 
     Track(Workspace.DescendantRemoving:Connect(function(inst)
