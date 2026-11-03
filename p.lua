@@ -106,7 +106,7 @@ for _, name in ipairs({ "YvoneHub", "YvoneLoading", "YvoneWarning" }) do
 end
 
 --==============================================================
--- VIP KEY VERIFICATION (raw GitHub read only)
+-- VIP KEY VERIFICATION (raw GitHub read only, no HWID binding)
 --==============================================================
 
 -- GANTI dua nilai di bawah sesuai repo Anda.
@@ -187,25 +187,9 @@ local function JsonDecode(str)
     return nil
 end
 
--- HWID: coba gethwid() (Delta), fallback ke UserId
-local function GetHWID()
-    local fn = (typeof(gethwid) == "function" and gethwid)
-        or (syn and syn.get_hwid)
-        or (typeof(get_hwid) == "function" and get_hwid)
-
-    if fn then
-        local ok, v = pcall(fn)
-        if ok and type(v) == "string" and #v > 0 then
-            return v
-        end
-    end
-
-    return "RBX-" .. tostring(Player.UserId)
-end
-
 -- Return: (ok, plan, reason)
---   ok     = true jika key valid & HWID cocok
---   plan   = "vip" / "free" / nil
+--   ok     = true jika key valid (tidak ada cek HWID / device)
+--   plan   = "vip" / nil
 --   reason = pesan error jika gagal
 local function VerifyVIP(key)
     key = tostring(key or ""):gsub("%s+", ""):upper()
@@ -229,22 +213,11 @@ local function VerifyVIP(key)
     end
 
     local entry = data[key]
-    if type(entry) ~= "table" then
+    if entry == nil then
         return false, nil, "Key tidak ditemukan."
     end
 
-    local bound = entry.hwid
-    local myHwid = GetHWID()
-
-    if bound == nil or bound == "" then
-        -- Belum diikat ke device mana pun: TOLAK (sesuai instruksi)
-        return false, nil, "Key belum diaktifkan untuk device ini."
-    end
-
-    if tostring(bound) ~= tostring(myHwid) then
-        return false, nil, "Key sudah dipakai device lain."
-    end
-
+    -- Key ada di key.json → terima, tanpa cek HWID / device
     return true, "vip", nil
 end
 
