@@ -52,9 +52,11 @@ end
 
 local MapMode, MapLabel = nil, nil
 local AtokTape = false
+local IsOpahMap = false
 
 if MatchId(OPAH_IDS) then
     MapMode, MapLabel = "Opah", "Opah"
+    IsOpahMap = true
 elseif MatchId(ATOK_IDS) then
     MapMode, MapLabel = "Atok", "Atok"
 elseif MatchId(ATOK_TAPE_IDS) then
@@ -109,11 +111,8 @@ end
 -- VIP KEY VERIFICATION (raw GitHub read only, no HWID binding)
 --==============================================================
 
--- GANTI dua nilai di bawah sesuai repo Anda.
--- Format URL raw: https://raw.githubusercontent.com/OWNER/REPO/BRANCH/PATH
 local VIP_KEYS_URL = "https://raw.githubusercontent.com/SaXyeeBARZ/xxxcrotx-functionx/refs/heads/main/key.json"
 
--- Kumpulkan semua fungsi request yang tersedia di executor (Delta, Synapse, dst.)
 local function GetRequestFns()
     local list = {}
     local function add(fn)
@@ -127,7 +126,6 @@ local function GetRequestFns()
     return list
 end
 
--- Coba satu URL pakai semua method. Return body string atau nil.
 local function FetchOnce(url)
     for _, fn in ipairs(GetRequestFns()) do
         local ok, res = pcall(fn, { Url = url, Method = "GET" })
@@ -142,7 +140,6 @@ local function FetchOnce(url)
         end
     end
 
-    -- Fallback: HttpService (hanya jalan kalau HttpEnabled + allowlist)
     local ok, body = pcall(function()
         return game:GetService("HttpService"):GetAsync(url, true)
     end)
@@ -153,11 +150,9 @@ local function FetchOnce(url)
     return nil
 end
 
--- Fetch dengan multi-fallback: /refs/heads/ variant + cache-bust + tanpa cache-bust
 local function HttpGet(baseUrl)
     local variants = { baseUrl }
 
-    -- raw.githubusercontent.com menerima /refs/heads/main/... DAN /main/...
     local simplified = string.gsub(baseUrl, "/refs/heads/", "/")
     if simplified ~= baseUrl then
         table.insert(variants, simplified)
@@ -178,7 +173,6 @@ local function HttpGet(baseUrl)
     return nil
 end
 
--- Decode JSON: pakai HttpService:JSONDecode (bisa dipakai di executor)
 local function JsonDecode(str)
     local ok, res = pcall(function()
         return game:GetService("HttpService"):JSONDecode(str)
@@ -187,17 +181,12 @@ local function JsonDecode(str)
     return nil
 end
 
--- Return: (ok, plan, reason)
---   ok     = true jika key valid (tidak ada cek HWID / device)
---   plan   = "vip" / nil
---   reason = pesan error jika gagal
 local function VerifyVIP(key)
     key = tostring(key or ""):gsub("%s+", ""):upper()
     if #key == 0 then
         return false, nil, "Key kosong."
     end
 
-    -- Master key lokal (tidak dicek ke GitHub) — sama seperti password lama
     if key == VIP_PASSWORD then
         return true, "vip", nil
     end
@@ -217,7 +206,6 @@ local function VerifyVIP(key)
         return false, nil, "Key tidak ditemukan."
     end
 
-    -- Key ada di key.json → terima, tanpa cek HWID / device
     return true, "vip", nil
 end
 
@@ -272,7 +260,6 @@ local State = {
     Animations = true,
     ShowStats = true,
 
-    -- Memory Blokir
     VisitedPositions = {}
 }
 
@@ -291,6 +278,7 @@ local FlyHold = false
 local MAX_DISTANCE = 1000
 local SCAN_INTERVAL = 3
 local UPDATE_INTERVAL = 0.25
+local OPAH_CANCEL_RADIUS = 16
 
 local function Track(c) table.insert(Connections, c) return c end
 
@@ -368,7 +356,7 @@ local function Text(parent, text, pos, size, ts, color, font, align)
 end
 
 --==============================================================
--- DRAWN ICONS (built from frames, no emoji / no images)
+-- DRAWN ICONS
 --==============================================================
 
 local function MakeIcon(name, parent, size, color, pos, anchor)
@@ -966,8 +954,6 @@ local function DrawerModelAncestor(inst)
     return nil
 end
 
--- one entry per drawer: a drawer Model, or a drawer-named Part that is not inside a drawer Model.
--- container models (holding other drawer models) are skipped.
 local function IsDrawerTarget(inst)
     if not IsDrawerName(inst) then return false end
     if inst:IsA("Model") then
@@ -978,7 +964,6 @@ local function IsDrawerTarget(inst)
     return true
 end
 
--- whole-word match for "pita" / "tape" (avoids names like Hospital or Capital)
 local function IsTapeName(inst)
     if not (inst:IsA("Model") or inst:IsA("BasePart") or inst:IsA("Tool")) then
         return false
@@ -1011,7 +996,6 @@ local function GetPart(inst)
     return nil
 end
 
--- Opah: unchanged name-based categories. Atok: drawers only (no mob ESP).
 local function Classify(inst)
     if IsAtok then
         if IsDrawerTarget(inst) then
@@ -1137,7 +1121,6 @@ local function RefreshESP()
     ScanESP()
 end
 
--- Roblox only renders about 31 Highlights at once, so only the nearest ones keep it on
 local HIGHLIGHT_LIMIT = 24
 
 local function UpdateESP()
@@ -1215,14 +1198,12 @@ local function IsZoneInstance(inst)
 end
 
 local function InSafeZone(part, zones)
-    -- inside an instance named like the safe zone
     local node = part
     while node and node ~= Workspace do
         if NameHasSafe(node.Name) then return true end
         node = node.Parent
     end
 
-    -- inside the bounding box of a safe zone
     for _, zone in ipairs(zones) do
         local rel = zone.CFrame:PointToObjectSpace(part.Position)
         local half = zone.Size / 2
@@ -1331,7 +1312,6 @@ local function FindNearest(kind)
     return best
 end
 
--- Memori Blokir Posisi
 local function PickUnvisited(list, findNearest)
     if not list or #list == 0 then return nil end
 
@@ -1391,7 +1371,6 @@ end
 
 local TeleportLoadingActive = false
 
--- Free users wait 2 seconds (with this overlay) before every teleport; VIP teleports instantly
 local function TeleportLoading(label)
     if IsVip then return true end
     if TeleportLoadingActive then return false end
@@ -1511,6 +1490,44 @@ local function PlaceAt(pos, label)
     return TeleportCF(CFrame.new(pos + Vector3.new(0, 4, 0)), label)
 end
 
+-- Instant teleport (tanpa overlay 2 detik) — dipakai safe zone
+local function TeleportCFInstant(cf)
+    local r = Root()
+    if not r then return false end
+    r.AssemblyLinearVelocity = Vector3.zero
+    r.CFrame = cf
+    return true
+end
+
+local function PlaceAtInstant(pos)
+    return TeleportCFInstant(CFrame.new(pos + Vector3.new(0, 4, 0)))
+end
+
+-- true kalau ada objek bernama "opah" dalam radius tertentu dari player.
+-- HANYA berlaku di map Opah — di map Atok selalu false.
+local function IsNearOpah(radius)
+    if not IsOpahMap then return false end
+    local root = Root()
+    if not root then return false end
+    local pos = root.Position
+    local char = Character()
+    for _, inst in ipairs(Workspace:GetDescendants()) do
+        if (inst:IsA("Model") or inst:IsA("BasePart")) then
+            if string.find(string.lower(inst.Name), "opah", 1, true) then
+                if not (char and inst:IsDescendantOf(char)) then
+                    local part = GetPart(inst)
+                    if part and part.Parent then
+                        if (part.Position - pos).Magnitude <= radius then
+                            return true
+                        end
+                    end
+                end
+            end
+        end
+    end
+    return false
+end
+
 local function ZonePos(inst)
     if inst:IsA("BasePart") then return inst.Position end
     return inst:GetPivot().Position
@@ -1555,11 +1572,11 @@ local function TeleportSafe()
                 Notify("Teleport", "Posisi spawn belum tersimpan.", "err")
                 return
             end
-            if TeleportCF(SpawnCFrame, "Your spawn") then
+            if TeleportCFInstant(SpawnCFrame) then
                 Notify("Teleport", "Teleported to your spawn.")
             end
         else
-            if TeleportCF(CFrame.new(ATOK_SAFE_POS), "Safe Zone") then
+            if TeleportCFInstant(CFrame.new(ATOK_SAFE_POS)) then
                 Notify("Teleport", "Teleported to Safe Zone.")
             end
         end
@@ -1568,7 +1585,7 @@ local function TeleportSafe()
 
     local pos = SafePosition()
     if not pos then Notify("Teleport", "Safe Zone tidak ditemukan.", "err") return end
-    if PlaceAt(pos, "Safe Zone") then
+    if PlaceAtInstant(pos) then
         Notify("Teleport", "Teleported to Safe Zone.")
     end
 end
@@ -1589,12 +1606,10 @@ local function RefreshNow()
     RefreshTargets()
 end
 
--- after the Free wait, targets are scanned again so the teleport uses fresh data
 local function Rescan()
     if not IsVip then RefreshNow() end
 end
 
--- moves instantly (the wait, if any, already happened)
 local function PlaceNow(pos)
     local r = Root()
     if not r then return false end
@@ -1603,7 +1618,6 @@ local function PlaceNow(pos)
     return true
 end
 
--- keeps the busy flag from getting stuck if something errors
 local function RunFarm(fn)
     if TeleportBusy or TeleportLoadingActive then return end
     TeleportBusy = true
@@ -1612,10 +1626,14 @@ local function RunFarm(fn)
     task.delay(0.6, function() TeleportBusy = false end)
 end
 
--- Utility page: key / note (nothing is picked or moved until the wait is over)
 local function TeleportItem(kind)
     if TeleportLoadingActive then return end
     if not Root() then Notify("Teleport", "Character belum siap.", "err") return end
+
+    if IsNearOpah(OPAH_CANCEL_RADIUS) then
+        Notify("Quick Action", "Opah terlalu dekat, teleport dibatalkan.", "err")
+        return
+    end
 
     RefreshNow()
     local first = (kind == "key") and TargetCache.Key or TargetCache.Note
@@ -1637,12 +1655,16 @@ local function TeleportItem(kind)
     end
 end
 
--- Opah: key first, then note
 local function SmartTeleport()
     RunFarm(function()
         if not Root() then
             SetFarmStatus("Waiting for character", C.Gray)
             Notify("Teleport", "Character belum siap.", "err")
+            return
+        end
+
+        if IsNearOpah(OPAH_CANCEL_RADIUS) then
+            SetFarmStatus("Opah terlalu dekat", C.Yellow)
             return
         end
 
@@ -1674,12 +1696,17 @@ local function SmartTeleport()
     end)
 end
 
--- Atok: random drawer on every click
 local function TeleportDrawer(notify)
     RunFarm(function()
         if not Root() then
             SetFarmStatus("Waiting for character", C.Gray)
             if notify then Notify("Teleport", "Character belum siap.", "err") end
+            return
+        end
+
+        if IsNearOpah(OPAH_CANCEL_RADIUS) then
+            SetFarmStatus("Opah terlalu dekat", C.Yellow)
+            if notify then Notify("Teleport", "Opah terlalu dekat, teleport dibatalkan.", "err") end
             return
         end
 
@@ -1713,12 +1740,17 @@ local function TeleportDrawer(notify)
     end)
 end
 
--- Atok 2: random pita / tape item on every click
 local function TeleportTape(notify)
     RunFarm(function()
         if not Root() then
             SetFarmStatus("Waiting for character", C.Gray)
             if notify then Notify("Teleport", "Character belum siap.", "err") end
+            return
+        end
+
+        if IsNearOpah(OPAH_CANCEL_RADIUS) then
+            SetFarmStatus("Opah terlalu dekat", C.Yellow)
+            if notify then Notify("Teleport", "Opah terlalu dekat, teleport dibatalkan.", "err") end
             return
         end
 
@@ -1921,11 +1953,7 @@ local function Launch()
         Parent = PlayerGui,
     })
 
-    local BottomNav -- forward declaration (used by SetUIVisible)
-
-    ----------------------------------------------------------
-    -- WINDOW
-    ----------------------------------------------------------
+    local BottomNav
 
     MainWindow = New("Frame", {
         Name = "MainWindow",
@@ -1946,10 +1974,6 @@ local function Launch()
         if BottomNav then BottomNav.Visible = v end
         if OpenButton then OpenButton.Visible = not v end
     end
-
-    ----------------------------------------------------------
-    -- SIDEBAR
-    ----------------------------------------------------------
 
     local Sidebar = New("Frame", {
         Size = UDim2.new(0, 170, 1, 0),
@@ -1997,10 +2021,6 @@ local function Launch()
     Text(Footer, "v2.0.0", UDim2.fromOffset(46, 10), UDim2.new(1, -50, 0, 18), 11, C.White, BOLD)
     Text(Footer, IsVip and "Premium Edition" or "Free Edition", UDim2.fromOffset(46, 28), UDim2.new(1, -50, 0, 16), 10, C.Gray)
 
-    ----------------------------------------------------------
-    -- CONTENT + HEADER
-    ----------------------------------------------------------
-
     local Content = New("Frame", {
         Size = UDim2.new(1, -170, 1, 0),
         Position = UDim2.fromOffset(170, 0),
@@ -2009,7 +2029,6 @@ local function Launch()
         Parent = MainWindow,
     })
 
-    -- drag handle (header strip, created first so buttons stay on top)
     local DragStrip = New("Frame", {
         Size = UDim2.new(1, 0, 0, 74),
         BackgroundTransparency = 1,
@@ -2053,10 +2072,6 @@ local function Launch()
     CloseBtn.MouseButton1Click:Connect(function()
         SetUIVisible(false)
     end)
-
-    ----------------------------------------------------------
-    -- PAGES
-    ----------------------------------------------------------
 
     local TabList = {
         { "Home", "home", "Welcome Back!", "Control everything, your way." },
@@ -2156,10 +2171,6 @@ local function Launch()
         Tabs[info[1]] = { Button = b, Stroke = st, Bar = bar, Icon = icon, Label = label }
         b.MouseButton1Click:Connect(function() SelectTab(info[1]) end)
     end
-
-    ----------------------------------------------------------
-    -- COMPONENTS
-    ----------------------------------------------------------
 
     local ON_POS = UDim2.new(1, -21, 0.5, -9)
     local OFF_POS = UDim2.new(0, 3, 0.5, -9)
@@ -2347,10 +2358,6 @@ local function Launch()
         return { Set = function(v) SetPercent((v - min) / (max - min), true) end }
     end
 
-    ----------------------------------------------------------
-    -- HOME PAGE
-    ----------------------------------------------------------
-
     local AutoFarmSwitch
     local Home = Pages.Home
 
@@ -2361,7 +2368,6 @@ local function Launch()
         Parent = Home,
     })
 
-    -- Banner
     local Banner = New("Frame", {
         Size = UDim2.new(1, 0, 0, 190),
         BackgroundColor3 = C.White,
@@ -2441,7 +2447,6 @@ local function Launch()
         BarStatus.Text = "All modules loaded"
     end)
 
-    -- Info cards
     local function InfoCard(i, iconName, iconColor, title, value, sub, valueColor)
         local card = New("Frame", {
             Size = UDim2.new(1 / 3, -8, 0, 82),
@@ -2468,7 +2473,6 @@ local function Launch()
     InfoCard(2, "gamepad", C.Gray, "Game Info", MapLabel, "Map supported")
     InfoCard(3, "dot", C.Green, "Status", "Ready", "All systems online", C.Green)
 
-    -- Quick access
     local Quick = New("Frame", {
         Size = UDim2.new(1, 0, 0, 104),
         Position = UDim2.fromOffset(0, 298),
@@ -2554,10 +2558,6 @@ local function Launch()
         if AutoFarmSwitch then AutoFarmSwitch.Set(not AutoFarmSwitch.Get()) end
     end)
 
-    ----------------------------------------------------------
-    -- ESP PAGE
-    ----------------------------------------------------------
-
     local ESPPage = Pages.ESP
 
     local ESPOpahSwitch, ESPItemSwitch, ESPDrawerSwitch
@@ -2613,10 +2613,6 @@ local function Launch()
         Notify("ESP", "All ESP disabled.")
     end)
 
-    ----------------------------------------------------------
-    -- MOVEMENT PAGE
-    ----------------------------------------------------------
-
     local MovePage = Pages.Movement
 
     local WalkSlider = Slider(MovePage, "Walk Speed", 16, 100, State.Speed, 1, function(v)
@@ -2634,10 +2630,6 @@ local function Launch()
         WalkSlider.Set(16)
         UpdateSpeed()
     end)
-
-    ----------------------------------------------------------
-    -- UTILITY PAGE
-    ----------------------------------------------------------
 
     local UtilPage = Pages.Utility
 
@@ -2696,10 +2688,6 @@ local function Launch()
         Notify("Scanner", "Target scan completed.")
     end)
 
-    ----------------------------------------------------------
-    -- SETTINGS / INTERFACE / SYSTEM PAGES
-    ----------------------------------------------------------
-
     local SettingsPage = Pages.Settings
 
     Toggle(SettingsPage, "UI Animations", "Enable smooth transitions.", true, 1, function(v)
@@ -2737,10 +2725,6 @@ local function Launch()
     InfoRow(SystemPage, "Map", MapLabel, 4)
     InfoRow(SystemPage, "Place ID", tostring(game.PlaceId), 5)
     InfoRow(SystemPage, "Access", IsVip and "VIP" or "Free", 6)
-
-    ----------------------------------------------------------
-    -- FLY PANEL
-    ----------------------------------------------------------
 
     FlyPanel = New("Frame", {
         AnchorPoint = Vector2.new(1, 0.5),
@@ -2840,10 +2824,6 @@ local function Launch()
         end
     end))
 
-    ----------------------------------------------------------
-    -- AUTO FARM PANEL
-    ----------------------------------------------------------
-
     FarmPanel = New("Frame", {
         AnchorPoint = Vector2.new(0, 0.5),
         Size = UDim2.fromOffset(250, 270),
@@ -2910,7 +2890,6 @@ local function Launch()
         Parent = FarmPanel,
     })
 
-    -- status card
     local StatusCard = New("Frame", {
         Size = UDim2.new(1, -32, 0, 46),
         Position = UDim2.fromOffset(16, 68),
@@ -2930,7 +2909,6 @@ local function Launch()
     Round(FarmStatusDot, 4)
     FarmStatusText = Text(StatusCard, "Idle", UDim2.fromOffset(32, 20), UDim2.new(1, -40, 0, 20), 12, C.White, BOLD)
 
-    -- auto teleport button (manual: one click = one teleport)
     local AutoBtn = New("TextButton", {
         Size = UDim2.new(1, -32, 0, 58),
         Position = UDim2.fromOffset(16, 124),
@@ -2953,7 +2931,6 @@ local function Launch()
     AutoBtn.MouseLeave:Connect(function() Tween(AutoBtn, 0.12, { BackgroundColor3 = C.White }) end)
     AutoBtn.MouseButton1Click:Connect(FarmTeleport)
 
-    -- safe zone button
     local SafeBtn = New("TextButton", {
         Size = UDim2.new(1, -32, 0, 58),
         Position = UDim2.fromOffset(16, 192),
@@ -2969,10 +2946,6 @@ local function Launch()
     SafeBtn.MouseEnter:Connect(function() Tween(SafeBtn, 0.12, { BackgroundColor3 = C.Gray }) end)
     SafeBtn.MouseLeave:Connect(function() Tween(SafeBtn, 0.12, { BackgroundColor3 = C.White }) end)
     SafeBtn.MouseButton1Click:Connect(TeleportSafe)
-
-    ----------------------------------------------------------
-    -- BOTTOM NAV
-    ----------------------------------------------------------
 
     BottomNav = New("Frame", {
         AnchorPoint = Vector2.new(0.5, 1),
@@ -3010,10 +2983,6 @@ local function Launch()
         b.MouseButton1Click:Connect(function() SelectTab(info[1]) end)
     end
 
-    ----------------------------------------------------------
-    -- FPS / PING PILLS
-    ----------------------------------------------------------
-
     StatsHolder = New("Frame", {
         AnchorPoint = Vector2.new(1, 0),
         Size = UDim2.fromOffset(250, 34),
@@ -3043,10 +3012,6 @@ local function Launch()
     Round(PingPill, 17)
     local PingLabel = Text(PingPill, "Ping: --", UDim2.fromScale(0, 0), UDim2.fromScale(1, 1), 14, C.White, BOLD, Enum.TextXAlignment.Center)
     PingLabel.RichText = true
-
-    ----------------------------------------------------------
-    -- OPEN BUTTON (shown while the UI is closed)
-    ----------------------------------------------------------
 
     local openCam = Workspace.CurrentCamera
     local openVS = openCam and openCam.ViewportSize or Vector2.new(1280, 720)
@@ -3117,10 +3082,6 @@ local function Launch()
         SetUIVisible(true)
     end)
 
-    ----------------------------------------------------------
-    -- UNLOAD CONFIRMATION + CLEANUP
-    ----------------------------------------------------------
-
     local Modal = New("Frame", {
         Size = UDim2.fromScale(1, 1),
         BackgroundColor3 = Color3.new(0, 0, 0),
@@ -3178,10 +3139,6 @@ local function Launch()
     Action(SystemPage, "UNLOAD YVONE HUB", 7, function()
         Modal.Visible = true
     end)
-
-    ----------------------------------------------------------
-    -- LOOPS
-    ----------------------------------------------------------
 
     local frames = 0
     local fps = 0
@@ -3283,10 +3240,6 @@ local function Launch()
         if State.ESP_Opah or State.ESP_Item or State.ESP_Drawer then RefreshESP() end
         Notify("Character", "Character successfully loaded.")
     end))
-
-    ----------------------------------------------------------
-    -- SCALE + INIT
-    ----------------------------------------------------------
 
     ApplyScale()
     Track(Workspace:GetPropertyChangedSignal("CurrentCamera"):Connect(ApplyScale))
@@ -3393,10 +3346,6 @@ local function BuildAccessSelect()
         Parent = LoadCard,
     })
 
-    ----------------------------------------------------------
-    -- select view
-    ----------------------------------------------------------
-
     Text(SelectView, "Choose your access", UDim2.fromOffset(0, 0), UDim2.new(1, 0, 0, 20), 12, C.Gray, BOLD, Enum.TextXAlignment.Center)
 
     local function OptionCard(side, iconName, iconColor, title, desc, tag, accent, onClick)
@@ -3436,10 +3385,6 @@ local function BuildAccessSelect()
         card.MouseButton1Click:Connect(onClick)
     end
 
-    ----------------------------------------------------------
-    -- password view
-    ----------------------------------------------------------
-
     MakeIcon("crown", PassView, 20, C.Yellow, UDim2.new(0.5, -66, 0, 1))
     Text(PassView, "VIP Access", UDim2.fromOffset(0, 0), UDim2.new(1, 0, 0, 22), 16, C.Yellow, BOLD, Enum.TextXAlignment.Center)
     Text(PassView, "Enter the password for instant teleport", UDim2.fromOffset(0, 24), UDim2.new(1, 0, 0, 18), 11, C.Gray, FONT, Enum.TextXAlignment.Center)
@@ -3463,7 +3408,6 @@ local function BuildAccessSelect()
 
     local msg = Text(PassView, "", UDim2.fromOffset(0, 98), UDim2.new(1, 0, 0, 18), 11, C.Red, BOLD, Enum.TextXAlignment.Center)
 
-    -- mask typed characters with *
     local real = ""
     local masking = false
     box:GetPropertyChangedSignal("Text"):Connect(function()
@@ -3485,14 +3429,12 @@ local function BuildAccessSelect()
         if unlocking then return end
         unlocking = true
 
-        -- Snapshot input, biar user typing selama HTTP tidak mengganggu
         local submittedKey = real
 
         msg.TextColor3 = C.Gray
         msg.Text = "Memeriksa key..."
         boxStroke.Color = C.Stroke
 
-        -- HTTP bisa memakan waktu; jalankan di task.spawn agar UI tidak freeze
         task.spawn(function()
             local ok, _plan, reason = VerifyVIP(submittedKey)
 
@@ -3540,10 +3482,6 @@ local function BuildAccessSelect()
     end)
 
     Btn(PassView, "UNLOCK VIP", UDim2.new(0.62, -6, 0, 40), UDim2.new(0.38, 6, 0, 124), TryUnlock, true)
-
-    ----------------------------------------------------------
-    -- cards
-    ----------------------------------------------------------
 
     OptionCard(0, "person", C.Gray, "Free User", "All features, 2s wait on teleport", "NO PASSWORD", C.White, function()
         StartLaunch(false)
