@@ -88,7 +88,7 @@ local function NameHasSafe(name)
     return false
 end
 
-for _, name in ipairs({ "YvoneHub", "YvoneLoading" }) do
+for _, name in ipairs({ "YvoneHub", "YvoneLoading", "YvoneWarning" }) do
     local old = PlayerGui:FindFirstChild(name)
     if old then old:Destroy() end
 end
@@ -151,7 +151,7 @@ local OriginalCollision = {}
 local Scales = {}
 local FlySwitches = {}
 
-local MainGui, LoadingGui, MainWindow, FlyPanel, FarmPanel, OpenButton, StatsHolder
+local MainGui, LoadingGui, WarnGui, MainWindow, FlyPanel, FarmPanel, OpenButton, StatsHolder
 local FlyVelocity, FlyOrientation, FlyAttachment, FlyConnection
 local NoclipConnection, CachedSafeZone
 local FarmStatusText, FarmStatusDot
@@ -805,11 +805,36 @@ local function IsDrawerName(inst)
         and string.find(string.lower(inst.Name), "drawer", 1, true) ~= nil
 end
 
-local function HasDrawerDescendant(inst)
-    for _, d in ipairs(inst:GetDescendants()) do
-        if IsDrawerName(d) then return true end
+local function IsDrawerModel(inst)
+    return inst:IsA("Model") and string.find(string.lower(inst.Name), "drawer", 1, true) ~= nil
+end
+
+local function HasDrawerModelDescendant(model)
+    for _, d in ipairs(model:GetDescendants()) do
+        if IsDrawerModel(d) then return true end
     end
     return false
+end
+
+local function DrawerModelAncestor(inst)
+    local n = inst.Parent
+    while n and n ~= Workspace do
+        if IsDrawerModel(n) then return n end
+        n = n.Parent
+    end
+    return nil
+end
+
+-- one entry per drawer: a drawer Model, or a drawer-named Part that is not inside a drawer Model.
+-- container models (holding other drawer models) are skipped.
+local function IsDrawerTarget(inst)
+    if not IsDrawerName(inst) then return false end
+    if inst:IsA("Model") then
+        return not HasDrawerModelDescendant(inst)
+    end
+    local m = DrawerModelAncestor(inst)
+    if m and not HasDrawerModelDescendant(m) then return false end
+    return true
 end
 
 -- whole-word match for "pita" / "tape" (avoids names like Hospital or Capital)
@@ -836,6 +861,10 @@ end
 local function GetPart(inst)
     if inst:IsA("BasePart") then return inst end
     if inst:IsA("Model") or inst:IsA("Tool") then
+        if inst:IsA("Model") then
+            local rootPart = inst:FindFirstChild("HumanoidRootPart") or inst.PrimaryPart
+            if rootPart and rootPart:IsA("BasePart") then return rootPart end
+        end
         return inst:FindFirstChildWhichIsA("BasePart", true)
     end
     return nil
@@ -844,7 +873,7 @@ end
 -- Opah: unchanged name-based categories. Atok: drawers only (no mob ESP).
 local function Classify(inst)
     if IsAtok then
-        if IsDrawerName(inst) and not (inst:IsA("Model") and HasDrawerDescendant(inst)) then
+        if IsDrawerTarget(inst) then
             return "DRAWER", C.Yellow
         end
         return nil
@@ -883,15 +912,6 @@ local function CreateESP(inst)
 
     local part = GetPart(inst)
     if not part then return end
-
-    if category == "DRAWER" then
-        for _, d in pairs(ESPObjects) do
-            if d.Category == "DRAWER" and d.Part and d.Part.Parent
-                and (d.Part.Position - part.Position).Magnitude < 3 then
-                return
-            end
-        end
-    end
 
     local hl = Instance.new("Highlight")
     hl.Name = "YvoneHighlight"
@@ -976,9 +996,14 @@ local function RefreshESP()
     ScanESP()
 end
 
+-- Roblox only renders about 31 Highlights at once, so only the nearest ones keep it on
+local HIGHLIGHT_LIMIT = 24
+
 local function UpdateESP()
     local root = Root()
     if not root then return end
+
+    local ranked = {}
 
     for inst, data in pairs(ESPObjects) do
         if not inst.Parent then
@@ -988,7 +1013,13 @@ local function UpdateESP()
             if not part or not part.Parent then
                 part = GetPart(inst)
                 data.Part = part
+                if part then
+                    data.Billboard.Adornee = part
+                    data.Box.Adornee = part
+                    data.Box.Size = part.Size
+                end
             end
+
             if not part then
                 RemoveESP(inst)
             else
@@ -996,17 +1027,31 @@ local function UpdateESP()
                 if dist > MAX_DISTANCE then
                     RemoveESP(inst)
                 else
+                    data.Dist = dist
                     data.Billboard.Enabled = State.ESP_Name
                     data.Box.Visible = State.ESP_Box
+
                     local shown = data.Display or data.Category
                     if State.ESP_Distance then
                         data.Label.Text = string.format("%s  [%dm]", shown, math.floor(dist * 0.28))
                     else
                         data.Label.Text = shown
                     end
+
+                    table.insert(ranked, data)
                 end
             end
         end
+    end
+
+    table.sort(ranked, function(a, b)
+        local da = (a.Category == "OPAH") and -1 or a.Dist
+        local db = (b.Category == "OPAH") and -1 or b.Dist
+        return da < db
+    end)
+
+    for i, data in ipairs(ranked) do
+        data.Highlight.Enabled = i <= HIGHLIGHT_LIMIT
     end
 end
 
@@ -1076,7 +1121,7 @@ local function RefreshTargets()
                             table.insert(found, { Part = part, Cat = "TAPE" })
                         end
                     end
-                elseif IsDrawerName(inst) and not (inst:IsA("Model") and HasDrawerDescendant(inst)) then
+                elseif IsDrawerTarget(inst) then
                     local part = GetPart(inst)
                     if part then
                         table.insert(found, { Part = part, Cat = "DRAWER" })
@@ -1100,7 +1145,7 @@ local function RefreshTargets()
                 local list = (item.Cat == "DRAWER") and TargetCache.Drawer or TargetCache.Tape
                 local duplicate = false
                 for _, other in ipairs(list) do
-                    if (other.Position - item.Part.Position).Magnitude < 3 then
+                    if (other.Position - item.Part.Position).Magnitude < 1.5 then
                         duplicate = true
                         break
                     end
@@ -1143,6 +1188,11 @@ local function FindNearest(kind)
         end
     end
     return best
+end
+
+local function PlaceAt(root, pos)
+    root.AssemblyLinearVelocity = Vector3.zero
+    root.CFrame = CFrame.new(pos + Vector3.new(0, 4, 0))
 end
 
 local function ZonePos(inst)
@@ -1210,7 +1260,7 @@ local function TeleportItem(kind)
     local target = FindNearest(kind)
     if not target then Notify("Quick Action", "Target belum ditemukan.", "err") return end
 
-    root.CFrame = CFrame.new(target.Position + Vector3.new(0, 4, 0))
+    PlaceAt(root, target.Position)
     Notify("Quick Action", "Target ditemukan.")
 end
 
@@ -1247,7 +1297,7 @@ local function SmartTeleport()
     end
 
     if target then
-        root.CFrame = CFrame.new(target.Position + Vector3.new(0, 3, 0))
+        PlaceAt(root, target.Position)
         SetFarmStatus("Teleported to " .. label, C.Green)
     else
         SetFarmStatus("No key or note found", C.Yellow)
@@ -1292,7 +1342,7 @@ local function TeleportDrawer(notify)
         end
         LastDrawer = pick
 
-        root.CFrame = CFrame.new(pick.Position + Vector3.new(0, 3, 0))
+        PlaceAt(root, pick.Position)
         SetFarmStatus(string.format("Random drawer (%d found)", #list), C.Green)
         if notify then Notify("Teleport", "Teleported to a random drawer.") end
     end
@@ -1336,7 +1386,7 @@ local function TeleportTape(notify)
         end
         LastTape = pick
 
-        root.CFrame = CFrame.new(pick.Position + Vector3.new(0, 3, 0))
+        PlaceAt(root, pick.Position)
         SetFarmStatus(string.format("Random tape (%d found)", #list), C.Green)
         if notify then Notify("Teleport", "Teleported to a random tape.") end
     end
@@ -2638,23 +2688,72 @@ local function Launch()
     -- OPEN BUTTON (shown while the UI is closed)
     ----------------------------------------------------------
 
+    local openCam = Workspace.CurrentCamera
+    local openVS = openCam and openCam.ViewportSize or Vector2.new(1280, 720)
+
     OpenButton = New("TextButton", {
-        Size = UDim2.fromOffset(52, 52),
-        Position = UDim2.new(0, 18, 0.5, -26),
+        Size = UDim2.fromOffset(64, 36),
+        Position = UDim2.fromOffset(16, math.floor(openVS.Y / 2 - 18)),
         BackgroundColor3 = C.White,
-        Text = "Y",
+        Text = "YVONE",
         TextColor3 = C.Bg,
-        TextSize = 24,
+        TextSize = 12,
         Font = BLACK,
         AutoButtonColor = false,
         Visible = false,
+        ZIndex = 50,
         Parent = MainGui,
     })
-    Round(OpenButton, 26)
+    Round(OpenButton, 8)
     Stroke(OpenButton, C.Stroke, 1.4, 0.2)
     OpenButton.MouseEnter:Connect(function() Tween(OpenButton, 0.12, { BackgroundColor3 = C.Gray }) end)
     OpenButton.MouseLeave:Connect(function() Tween(OpenButton, 0.12, { BackgroundColor3 = C.White }) end)
+
+    local openActive, openMoved = false, false
+    local openStart, openOrigin
+
+    OpenButton.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1
+            or input.UserInputType == Enum.UserInputType.Touch then
+            openActive = true
+            openMoved = false
+            openStart = input.Position
+            openOrigin = Vector2.new(OpenButton.Position.X.Offset, OpenButton.Position.Y.Offset)
+        end
+    end)
+
+    Track(UIS.InputChanged:Connect(function(input)
+        if not openActive then return end
+        if input.UserInputType ~= Enum.UserInputType.MouseMovement
+            and input.UserInputType ~= Enum.UserInputType.Touch then
+            return
+        end
+
+        local dx = input.Position.X - openStart.X
+        local dy = input.Position.Y - openStart.Y
+        if math.abs(dx) + math.abs(dy) > 8 then openMoved = true end
+
+        if openMoved then
+            local cam = Workspace.CurrentCamera
+            local vs = cam and cam.ViewportSize or Vector2.new(1280, 720)
+            local nx = math.clamp(openOrigin.X + dx, 0, math.max(vs.X - OpenButton.AbsoluteSize.X, 0))
+            local ny = math.clamp(openOrigin.Y + dy, 0, math.max(vs.Y - OpenButton.AbsoluteSize.Y, 0))
+            OpenButton.Position = UDim2.fromOffset(nx, ny)
+        end
+    end))
+
+    Track(UIS.InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1
+            or input.UserInputType == Enum.UserInputType.Touch then
+            openActive = false
+        end
+    end))
+
     OpenButton.MouseButton1Click:Connect(function()
+        if openMoved then
+            openMoved = false
+            return
+        end
         SetUIVisible(true)
     end)
 
@@ -2705,6 +2804,7 @@ local function Launch()
         ClearESP()
         DisconnectAll()
 
+        if WarnGui then WarnGui:Destroy() WarnGui = nil end
         if MainGui then MainGui:Destroy() end
     end
 
@@ -2771,6 +2871,32 @@ local function Launch()
         end
     end)
 
+    Track(Workspace.DescendantAdded:Connect(function(inst)
+        if not (State.ESP_Opah or State.ESP_Item or State.ESP_Drawer) then return end
+
+        local nameOk
+        if IsAtok then
+            nameOk = IsDrawerName(inst)
+        else
+            nameOk = GetCategory(inst.Name) ~= nil
+        end
+        if not nameOk then return end
+
+        task.delay(0.3, function()
+            if not MainGui or not MainGui.Parent then return end
+            if not inst.Parent or ESPObjects[inst] then return end
+
+            local cat = Classify(inst)
+            if not cat or not CategoryEnabled(cat) then return end
+
+            local root = Root()
+            local part = GetPart(inst)
+            if root and part and (root.Position - part.Position).Magnitude <= MAX_DISTANCE then
+                CreateESP(inst)
+            end
+        end)
+    end))
+
     Track(Workspace.DescendantRemoving:Connect(function(inst)
         if ESPObjects[inst] then RemoveESP(inst) end
         if inst == CachedSafeZone then CachedSafeZone = nil end
@@ -2814,40 +2940,49 @@ local function Launch()
     Notify("Map detected", MapLabel .. " is supported.")
 
     if IsAtok then
+        warn("[YVONE] Di map Atok tidak ada ESP Atok (mob). Hanya ESP Drawer yang tersedia.")
+
+        WarnGui = New("ScreenGui", {
+            Name = "YvoneWarning",
+            ResetOnSpawn = false,
+            IgnoreGuiInset = true,
+            DisplayOrder = 500,
+            Parent = PlayerGui,
+        })
+
         local Warn = New("Frame", {
             AnchorPoint = Vector2.new(0.5, 0),
-            Size = UDim2.fromOffset(450, 80),
-            Position = UDim2.new(0.5, 0, 0, -130),
+            Size = UDim2.fromOffset(460, 84),
+            Position = UDim2.new(0.5, 0, 0, 96),
             BackgroundColor3 = C.Panel,
-            ZIndex = 190,
-            Parent = MainGui,
+            Parent = WarnGui,
         })
         Round(Warn, 16)
-        Stroke(Warn, C.Yellow, 1.3, 0.35)
+        Stroke(Warn, C.Yellow, 1.4, 0.2)
         AddScale(Warn)
         ApplyScale()
 
         local wi = New("Frame", {
-            Size = UDim2.fromOffset(38, 38),
-            Position = UDim2.fromOffset(14, 21),
+            Size = UDim2.fromOffset(40, 40),
+            Position = UDim2.fromOffset(14, 22),
             BackgroundColor3 = C.Yellow,
             Parent = Warn,
         })
-        Round(wi, 19)
-        MakeIcon("warn", wi, 20, C.Bg, CENTER_POS, CENTER)
+        Round(wi, 20)
+        MakeIcon("warn", wi, 22, C.Bg, CENTER_POS, CENTER)
 
-        Text(Warn, "Peringatan", UDim2.fromOffset(64, 10), UDim2.new(1, -160, 0, 20), 14, C.Yellow, BOLD)
-        local wmsg = Text(Warn, "Di map Atok tidak ada ESP Atok (mob). Hanya ESP Drawer yang tersedia.", UDim2.fromOffset(64, 30), UDim2.new(1, -160, 0, 42), 11, C.Gray)
+        Text(Warn, "Peringatan", UDim2.fromOffset(66, 10), UDim2.new(1, -170, 0, 22), 15, C.Yellow, BOLD)
+        local wmsg = Text(Warn, "Di map Atok tidak ada ESP Atok (mob). Hanya ESP Drawer yang tersedia.", UDim2.fromOffset(66, 34), UDim2.new(1, -170, 0, 42), 12, C.White)
         wmsg.TextWrapped = true
         wmsg.TextYAlignment = Enum.TextYAlignment.Top
 
         local HideBtn = New("TextButton", {
-            Size = UDim2.fromOffset(72, 34),
-            Position = UDim2.new(1, -86, 0.5, -17),
+            Size = UDim2.fromOffset(76, 36),
+            Position = UDim2.new(1, -90, 0.5, -18),
             BackgroundColor3 = C.Card2,
             Text = "Hide",
             TextColor3 = C.White,
-            TextSize = 12,
+            TextSize = 13,
             Font = BOLD,
             AutoButtonColor = false,
             Parent = Warn,
@@ -2857,13 +2992,11 @@ local function Launch()
         HideBtn.MouseEnter:Connect(function() Tween(HideBtn, 0.12, { BackgroundColor3 = C.Stroke }) end)
         HideBtn.MouseLeave:Connect(function() Tween(HideBtn, 0.12, { BackgroundColor3 = C.Card2 }) end)
         HideBtn.MouseButton1Click:Connect(function()
-            Tween(Warn, 0.25, { Position = UDim2.new(0.5, 0, 0, -130) })
-            task.delay(0.3, function()
-                if Warn.Parent then Warn:Destroy() end
-            end)
+            if WarnGui then
+                WarnGui:Destroy()
+                WarnGui = nil
+            end
         end)
-
-        Tween(Warn, 0.4, { Position = UDim2.new(0.5, 0, 0, 96) })
     end
 end
 
