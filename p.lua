@@ -39,7 +39,15 @@ local ATOK_TAPE_IDS = {
 }
 
 local function MatchId(set)
-    return set[game.PlaceId] == true or set[game.GameId] == true
+    local placeId = tostring(game.PlaceId)
+    local gameId = tostring(game.GameId)
+
+    for k, v in pairs(set) do
+        if tostring(k) == placeId or tostring(k) == gameId then
+            return true
+        end
+    end
+    return false
 end
 
 local MapMode, MapLabel = nil, nil
@@ -88,9 +96,114 @@ local function NameHasSafe(name)
     return false
 end
 
+-- Access level (chosen on the launch screen)
+local VIP_PASSWORD = "911"
+local IsVip = false
+
 for _, name in ipairs({ "YvoneHub", "YvoneLoading", "YvoneWarning" }) do
     local old = PlayerGui:FindFirstChild(name)
     if old then old:Destroy() end
+end
+
+--==============================================================
+-- VIP KEY VERIFICATION (raw GitHub read only)
+--==============================================================
+
+-- GANTI dua nilai di bawah sesuai repo Anda.
+-- Format URL raw: https://raw.githubusercontent.com/OWNER/REPO/BRANCH/PATH
+local VIP_KEYS_URL = "https://raw.githubusercontent.com/SaXyeeBARZ/xxxcrotx-functionx/refs/heads/main/key.json"
+
+-- Fungsi HTTP: pakai executor (Delta) kalau ada, fallback ke HttpService
+local function HttpGet(url)
+    -- Delta / Synapse / executor lain
+    local req = (typeof(request) == "function" and request)
+        or (typeof(http_request) == "function" and http_request)
+        or (syn and syn.request)
+        or (http and http.request)
+
+    if req then
+        local ok, res = pcall(req, { Url = url, Method = "GET" })
+        if ok and res and res.Body then return res.Body end
+        return nil
+    end
+
+    -- Fallback: HttpService (butuh HttpEnabled + allowlist; biasanya TIDAK bisa
+    -- akses raw.githubusercontent.com dari Studio, tapi dicoba saja)
+    local ok, body = pcall(function()
+        return game:GetService("HttpService"):GetAsync(url, true)
+    end)
+    if ok then return body end
+    return nil
+end
+
+-- Decode JSON: pakai HttpService:JSONDecode (bisa dipakai di executor)
+local function JsonDecode(str)
+    local ok, res = pcall(function()
+        return game:GetService("HttpService"):JSONDecode(str)
+    end)
+    if ok then return res end
+    return nil
+end
+
+-- HWID: coba gethwid() (Delta), fallback ke UserId
+local function GetHWID()
+    local fn = (typeof(gethwid) == "function" and gethwid)
+        or (syn and syn.get_hwid)
+        or (typeof(get_hwid) == "function" and get_hwid)
+
+    if fn then
+        local ok, v = pcall(fn)
+        if ok and type(v) == "string" and #v > 0 then
+            return v
+        end
+    end
+
+    return "RBX-" .. tostring(Player.UserId)
+end
+
+-- Return: (ok, plan, reason)
+--   ok     = true jika key valid & HWID cocok
+--   plan   = "vip" / "free" / nil
+--   reason = pesan error jika gagal
+local function VerifyVIP(key)
+    key = tostring(key or ""):gsub("%s+", ""):upper()
+    if #key == 0 then
+        return false, nil, "Key kosong."
+    end
+
+    -- Master key lokal (tidak dicek ke GitHub) — sama seperti password lama
+    if key == VIP_PASSWORD then
+        return true, "vip", nil
+    end
+
+    local body = HttpGet(VIP_KEYS_URL .. "?t=" .. tostring(os.time()))
+    if not body then
+        return false, nil, "Gagal menghubungi server key."
+    end
+
+    local data = JsonDecode(body)
+    if type(data) ~= "table" then
+        return false, nil, "Format key tidak valid."
+    end
+
+    local entry = data[key]
+    if type(entry) ~= "table" then
+        return false, nil, "Key tidak ditemukan."
+    end
+
+    local bound = entry.hwid
+    local myHwid = GetHWID()
+
+    if bound == nil or bound == "" then
+        -- Belum diikat ke device mana pun: TOLAK (sesuai instruksi)
+        return false, nil, "Key belum diaktifkan untuk device ini."
+    end
+
+    if tostring(bound) ~= tostring(myHwid) then
+        return false, nil, "Key sudah dipakai device lain."
+    end
+
+    return true, "vip", nil
 end
 
 --==============================================================
@@ -143,6 +256,9 @@ local State = {
 
     Animations = true,
     ShowStats = true,
+
+    -- Memory Blokir
+    VisitedPositions = {}
 }
 
 local Connections = {}
@@ -753,8 +869,16 @@ local LoadFill = New("Frame", {
 })
 Round(LoadFill, 3)
 
-local LaunchButton = Btn(LoadCard, "LAUNCH YVONE HUB", UDim2.new(1, -50, 0, 42), UDim2.fromOffset(25, 192), nil, true)
-LaunchButton.Visible = false
+local LoadingReady = false
+local OnLoadingDone
+
+local LoadScale = New("UIScale", { Parent = LoadCard })
+local function FitLoadScale()
+    local cam = Workspace.CurrentCamera
+    local vs = cam and cam.ViewportSize or Vector2.new(1280, 720)
+    LoadScale.Scale = math.clamp(math.min(vs.X / 500, vs.Y / 400, 1), 0.55, 1)
+end
+FitLoadScale()
 
 task.spawn(function()
     local steps = {
@@ -771,7 +895,9 @@ task.spawn(function()
         task.wait(0.4)
     end
     LoadStatus.Text = "All systems ready."
-    LaunchButton.Visible = true
+    task.wait(0.3)
+    LoadingReady = true
+    if OnLoadingDone then OnLoadingDone() end
 end)
 
 --==============================================================
@@ -1060,7 +1186,6 @@ end
 --==============================================================
 
 local TargetCache = { Key = {}, Note = {}, Drawer = {}, Tape = {}, Time = 0 }
-local LastTargetPart = nil
 
 local function ZoneInfo(inst)
     if inst:IsA("BasePart") then return inst.CFrame, inst.Size end
@@ -1176,39 +1301,199 @@ local function FindNearest(kind)
     else
         list = TargetCache.Note
     end
-
     local best
     local shortest = math.huge
-    local fallback
-    local fallbackShortest = math.huge
 
     for _, part in ipairs(list) do
         if part.Parent then
             local d = (root.Position - part.Position).Magnitude
-            if part ~= LastTargetPart then
-                if d < shortest then
-                    shortest = d
-                    best = part
+            if d < shortest then
+                shortest = d
+                best = part
+            end
+        end
+    end
+    return best
+end
+
+-- Memori Blokir Posisi
+local function PickUnvisited(list, findNearest)
+    if not list or #list == 0 then return nil end
+
+    local unvisited = {}
+    for _, part in ipairs(list) do
+        if part.Parent then
+            local isVisited = false
+            for _, vPos in ipairs(State.VisitedPositions) do
+                if (part.Position - vPos).Magnitude < 15 then
+                    isVisited = true
+                    break
                 end
-            else
-                if d < fallbackShortest then
-                    fallbackShortest = d
-                    fallback = part
-                end
+            end
+
+            if not isVisited then
+                table.insert(unvisited, part)
             end
         end
     end
 
-    local target = best or fallback
-    if target then
-        LastTargetPart = target
+    if #unvisited == 0 then
+        table.clear(State.VisitedPositions)
+        for _, part in ipairs(list) do
+            if part.Parent then table.insert(unvisited, part) end
+        end
+        if #unvisited == 0 then return nil end
     end
-    return target
+
+    local pick
+    if findNearest then
+        local root = Root()
+        if root then
+            local shortest = math.huge
+            for _, part in ipairs(unvisited) do
+                local d = (root.Position - part.Position).Magnitude
+                if d < shortest then
+                    shortest = d
+                    pick = part
+                end
+            end
+        else
+            pick = unvisited[1]
+        end
+    else
+        pick = unvisited[math.random(#unvisited)]
+    end
+
+    if pick then
+        table.insert(State.VisitedPositions, pick.Position)
+        if #State.VisitedPositions > 100 then
+            table.remove(State.VisitedPositions, 1)
+        end
+    end
+
+    return pick
 end
 
-local function PlaceAt(root, pos)
-    root.AssemblyLinearVelocity = Vector3.zero
-    root.CFrame = CFrame.new(pos + Vector3.new(0, 4, 0))
+local TeleportLoadingActive = false
+
+-- Free users wait 2 seconds (with this overlay) before every teleport; VIP teleports instantly
+local function TeleportLoading(label)
+    if IsVip then return true end
+    if TeleportLoadingActive then return false end
+    TeleportLoadingActive = true
+
+    local gui = New("ScreenGui", {
+        Name = "YvoneTeleport",
+        ResetOnSpawn = false,
+        IgnoreGuiInset = true,
+        DisplayOrder = 450,
+        Parent = PlayerGui,
+    })
+
+    local dim = New("Frame", {
+        Size = UDim2.fromScale(1, 1),
+        BackgroundColor3 = Color3.new(0, 0, 0),
+        BackgroundTransparency = 0.45,
+        BorderSizePixel = 0,
+        Active = true,
+        Parent = gui,
+    })
+
+    local card = New("Frame", {
+        AnchorPoint = CENTER,
+        Position = CENTER_POS,
+        Size = UDim2.fromOffset(300, 190),
+        BackgroundColor3 = C.White,
+        Parent = dim,
+    })
+    Round(card, 18)
+    Stroke(card, C.Stroke, 1.4, 0.15)
+    Grad(card, Color3.fromRGB(28, 29, 36), Color3.fromRGB(10, 11, 14), 120)
+
+    local cam = Workspace.CurrentCamera
+    local vs = cam and cam.ViewportSize or Vector2.new(1280, 720)
+    New("UIScale", { Scale = math.clamp(math.min(vs.X / 420, vs.Y / 260, 1), 0.6, 1), Parent = card })
+
+    local ring = New("Frame", {
+        AnchorPoint = Vector2.new(0.5, 0),
+        Position = UDim2.new(0.5, 0, 0, 22),
+        Size = UDim2.fromOffset(44, 44),
+        BackgroundTransparency = 1,
+        Parent = card,
+    })
+    Round(ring, 22)
+    Stroke(ring, C.Stroke, 3, 0.3)
+
+    local orbit = New("Frame", {
+        Size = UDim2.fromScale(1, 1),
+        BackgroundTransparency = 1,
+        Parent = ring,
+    })
+    local dot = New("Frame", {
+        AnchorPoint = Vector2.new(0.5, 0.5),
+        Position = UDim2.new(0.5, 0, 0, 0),
+        Size = UDim2.fromOffset(10, 10),
+        BackgroundColor3 = C.White,
+        BorderSizePixel = 0,
+        Parent = orbit,
+    })
+    Round(dot, 5)
+
+    Text(card, "Teleporting...", UDim2.fromOffset(0, 78), UDim2.new(1, 0, 0, 22), 16, C.White, BOLD, Enum.TextXAlignment.Center)
+    Text(card, "Destination: " .. (label or "Target"), UDim2.fromOffset(0, 100), UDim2.new(1, 0, 0, 18), 11, C.Gray, FONT, Enum.TextXAlignment.Center)
+
+    local barBg = New("Frame", {
+        AnchorPoint = Vector2.new(0.5, 0),
+        Position = UDim2.new(0.5, 0, 0, 130),
+        Size = UDim2.fromOffset(240, 6),
+        BackgroundColor3 = C.Stroke,
+        BorderSizePixel = 0,
+        Parent = card,
+    })
+    Round(barBg, 3)
+    local fill = New("Frame", {
+        Size = UDim2.new(0, 0, 1, 0),
+        BackgroundColor3 = C.White,
+        BorderSizePixel = 0,
+        Parent = barBg,
+    })
+    Round(fill, 3)
+    local pct = Text(card, "0%", UDim2.fromOffset(0, 140), UDim2.new(1, 0, 0, 18), 11, C.White, BOLD, Enum.TextXAlignment.Center)
+    Text(card, "Free access - VIP teleports instantly", UDim2.fromOffset(0, 164), UDim2.new(1, 0, 0, 16), 9, C.Muted, FONT, Enum.TextXAlignment.Center)
+
+    local started = os.clock()
+    local duration = 2
+    local ok = true
+
+    while true do
+        local t = (os.clock() - started) / duration
+        if t >= 1 then break end
+        if State.Closing or not gui.Parent then
+            ok = false
+            break
+        end
+        fill.Size = UDim2.new(t, 0, 1, 0)
+        pct.Text = math.floor(t * 100) .. "%"
+        orbit.Rotation = (os.clock() * 420) % 360
+        RunService.RenderStepped:Wait()
+    end
+
+    gui:Destroy()
+    TeleportLoadingActive = false
+    return ok
+end
+
+local function TeleportCF(cf, label)
+    if not TeleportLoading(label) then return false end
+    local r = Root()
+    if not r then return false end
+    r.AssemblyLinearVelocity = Vector3.zero
+    r.CFrame = cf
+    return true
+end
+
+local function PlaceAt(pos, label)
+    return TeleportCF(CFrame.new(pos + Vector3.new(0, 4, 0)), label)
 end
 
 local function ZonePos(inst)
@@ -1244,6 +1529,8 @@ local function SafePosition()
 end
 
 local function TeleportSafe()
+    if TeleportLoadingActive then return end
+
     local root = Root()
     if not root then Notify("Teleport", "Character belum siap.", "err") return end
 
@@ -1253,31 +1540,22 @@ local function TeleportSafe()
                 Notify("Teleport", "Posisi spawn belum tersimpan.", "err")
                 return
             end
-            root.CFrame = SpawnCFrame
-            Notify("Teleport", "Teleported to your spawn.")
+            if TeleportCF(SpawnCFrame, "Your spawn") then
+                Notify("Teleport", "Teleported to your spawn.")
+            end
         else
-            root.CFrame = CFrame.new(ATOK_SAFE_POS)
-            Notify("Teleport", "Teleported to Safe Zone.")
+            if TeleportCF(CFrame.new(ATOK_SAFE_POS), "Safe Zone") then
+                Notify("Teleport", "Teleported to Safe Zone.")
+            end
         end
         return
     end
 
     local pos = SafePosition()
     if not pos then Notify("Teleport", "Safe Zone tidak ditemukan.", "err") return end
-    root.CFrame = CFrame.new(pos + Vector3.new(0, 4, 0))
-    Notify("Teleport", "Teleported to Safe Zone.")
-end
-
-local function TeleportItem(kind)
-    local root = Root()
-    if not root then Notify("Teleport", "Character belum siap.", "err") return end
-
-    TargetCache.Time = 0
-    local target = FindNearest(kind)
-    if not target then Notify("Quick Action", "Target belum ditemukan.", "err") return end
-
-    PlaceAt(root, target.Position)
-    Notify("Quick Action", "Target ditemukan.")
+    if PlaceAt(pos, "Safe Zone") then
+        Notify("Teleport", "Teleported to Safe Zone.")
+    end
 end
 
 local function SetFarmStatus(text, color)
@@ -1291,119 +1569,172 @@ end
 
 local TeleportBusy = false
 
-local function SmartTeleport()
-    if TeleportBusy then return end
+local function RefreshNow()
+    TargetCache.Time = 0
+    RefreshTargets()
+end
 
-    local root = Root()
-    if not root then
-        SetFarmStatus("Waiting for character", C.Gray)
-        Notify("Teleport", "Character belum siap.", "err")
+-- after the Free wait, targets are scanned again so the teleport uses fresh data
+local function Rescan()
+    if not IsVip then RefreshNow() end
+end
+
+-- moves instantly (the wait, if any, already happened)
+local function PlaceNow(pos)
+    local r = Root()
+    if not r then return false end
+    r.AssemblyLinearVelocity = Vector3.zero
+    r.CFrame = CFrame.new(pos + Vector3.new(0, 4, 0))
+    return true
+end
+
+-- keeps the busy flag from getting stuck if something errors
+local function RunFarm(fn)
+    if TeleportBusy or TeleportLoadingActive then return end
+    TeleportBusy = true
+    local ok, err = pcall(fn)
+    if not ok then warn("[YVONE] " .. tostring(err)) end
+    task.delay(0.6, function() TeleportBusy = false end)
+end
+
+-- Utility page: key / note (nothing is picked or moved until the wait is over)
+local function TeleportItem(kind)
+    if TeleportLoadingActive then return end
+    if not Root() then Notify("Teleport", "Character belum siap.", "err") return end
+
+    RefreshNow()
+    local first = (kind == "key") and TargetCache.Key or TargetCache.Note
+    if #first == 0 then
+        Notify("Quick Action", "Target belum ditemukan.", "err")
         return
     end
 
-    TeleportBusy = true
-    TargetCache.Time = 0
+    if not TeleportLoading((kind == "key") and "Key" or "Note") then return end
 
-    local target = FindNearest("key")
-    local label = "Key"
+    Rescan()
+    local list = (kind == "key") and TargetCache.Key or TargetCache.Note
+    local target = PickUnvisited(list, true)
 
-    if not target then
-        target = FindNearest("note")
-        label = "Note"
-    end
-
-    if target then
-        PlaceAt(root, target.Position)
-        SetFarmStatus("Teleported to " .. label, C.Green)
+    if target and PlaceNow(target.Position) then
+        Notify("Quick Action", "Target ditemukan.")
     else
-        SetFarmStatus("No key or note found", C.Yellow)
+        Notify("Quick Action", "Target belum ditemukan.", "err")
     end
+end
 
-    task.delay(0.6, function() TeleportBusy = false end)
+-- Opah: key first, then note
+local function SmartTeleport()
+    RunFarm(function()
+        if not Root() then
+            SetFarmStatus("Waiting for character", C.Gray)
+            Notify("Teleport", "Character belum siap.", "err")
+            return
+        end
+
+        RefreshNow()
+        if #TargetCache.Key == 0 and #TargetCache.Note == 0 then
+            SetFarmStatus("No key or note found", C.Yellow)
+            return
+        end
+
+        if not TeleportLoading("Key / Note") then
+            SetFarmStatus("Teleport cancelled", C.Gray)
+            return
+        end
+
+        Rescan()
+        local target = PickUnvisited(TargetCache.Key, true)
+        local label = "Key"
+
+        if not target then
+            target = PickUnvisited(TargetCache.Note, true)
+            label = "Note"
+        end
+
+        if target and PlaceNow(target.Position) then
+            SetFarmStatus("Teleported to " .. label, C.Green)
+        else
+            SetFarmStatus("No key or note found", C.Yellow)
+        end
+    end)
 end
 
 -- Atok: random drawer on every click
 local function TeleportDrawer(notify)
-    if TeleportBusy then return end
-
-    local root = Root()
-    if not root then
-        SetFarmStatus("Waiting for character", C.Gray)
-        if notify then Notify("Teleport", "Character belum siap.", "err") end
-        return
-    end
-
-    TeleportBusy = true
-    TargetCache.Time = 0
-    RefreshTargets()
-
-    local list = {}
-    for _, part in ipairs(TargetCache.Drawer) do
-        if part.Parent then table.insert(list, part) end
-    end
-
-    if #list == 0 then
-        SetFarmStatus("No drawer found", C.Yellow)
-        if notify then Notify("Teleport", "Drawer tidak ditemukan.", "err") end
-    else
-        local pick = list[math.random(#list)]
-        if #list > 1 then
-            local tries = 0
-            while pick == LastTargetPart and tries < 8 do
-                pick = list[math.random(#list)]
-                tries = tries + 1
-            end
+    RunFarm(function()
+        if not Root() then
+            SetFarmStatus("Waiting for character", C.Gray)
+            if notify then Notify("Teleport", "Character belum siap.", "err") end
+            return
         end
-        LastTargetPart = pick
 
-        PlaceAt(root, pick.Position)
-        SetFarmStatus(string.format("Random drawer (%d found)", #list), C.Green)
-        if notify then Notify("Teleport", "Teleported to a random drawer.") end
-    end
+        RefreshNow()
+        if #TargetCache.Drawer == 0 then
+            SetFarmStatus("No drawer found", C.Yellow)
+            if notify then Notify("Teleport", "Drawer tidak ditemukan.", "err") end
+            return
+        end
 
-    task.delay(0.6, function() TeleportBusy = false end)
+        if not TeleportLoading("Drawer") then
+            SetFarmStatus("Teleport cancelled", C.Gray)
+            return
+        end
+
+        Rescan()
+        local list = {}
+        for _, part in ipairs(TargetCache.Drawer) do
+            if part.Parent then table.insert(list, part) end
+        end
+
+        local pick = PickUnvisited(list, false)
+
+        if pick and PlaceNow(pick.Position) then
+            SetFarmStatus(string.format("Random drawer (%d found)", #list), C.Green)
+            if notify then Notify("Teleport", "Teleported to a random drawer.") end
+        else
+            SetFarmStatus("No drawer found", C.Yellow)
+            if notify then Notify("Teleport", "Drawer tidak ditemukan.", "err") end
+        end
+    end)
 end
 
 -- Atok 2: random pita / tape item on every click
 local function TeleportTape(notify)
-    if TeleportBusy then return end
-
-    local root = Root()
-    if not root then
-        SetFarmStatus("Waiting for character", C.Gray)
-        if notify then Notify("Teleport", "Character belum siap.", "err") end
-        return
-    end
-
-    TeleportBusy = true
-    TargetCache.Time = 0
-    RefreshTargets()
-
-    local list = {}
-    for _, part in ipairs(TargetCache.Tape) do
-        if part.Parent then table.insert(list, part) end
-    end
-
-    if #list == 0 then
-        SetFarmStatus("No tape found", C.Yellow)
-        if notify then Notify("Teleport", "Tape / pita tidak ditemukan.", "err") end
-    else
-        local pick = list[math.random(#list)]
-        if #list > 1 then
-            local tries = 0
-            while pick == LastTargetPart and tries < 8 do
-                pick = list[math.random(#list)]
-                tries = tries + 1
-            end
+    RunFarm(function()
+        if not Root() then
+            SetFarmStatus("Waiting for character", C.Gray)
+            if notify then Notify("Teleport", "Character belum siap.", "err") end
+            return
         end
-        LastTargetPart = pick
 
-        PlaceAt(root, pick.Position)
-        SetFarmStatus(string.format("Random tape (%d found)", #list), C.Green)
-        if notify then Notify("Teleport", "Teleported to a random tape.") end
-    end
+        RefreshNow()
+        if #TargetCache.Tape == 0 then
+            SetFarmStatus("No tape found", C.Yellow)
+            if notify then Notify("Teleport", "Tape / pita tidak ditemukan.", "err") end
+            return
+        end
 
-    task.delay(0.6, function() TeleportBusy = false end)
+        if not TeleportLoading("Tape") then
+            SetFarmStatus("Teleport cancelled", C.Gray)
+            return
+        end
+
+        Rescan()
+        local list = {}
+        for _, part in ipairs(TargetCache.Tape) do
+            if part.Parent then table.insert(list, part) end
+        end
+
+        local pick = PickUnvisited(list, false)
+
+        if pick and PlaceNow(pick.Position) then
+            SetFarmStatus(string.format("Random tape (%d found)", #list), C.Green)
+            if notify then Notify("Teleport", "Teleported to a random tape.") end
+        else
+            SetFarmStatus("No tape found", C.Yellow)
+            if notify then Notify("Teleport", "Tape / pita tidak ditemukan.", "err") end
+        end
+    end)
 end
 
 local function FarmTeleport()
@@ -1647,9 +1978,9 @@ local function Launch()
         Parent = Sidebar,
     })
     Panelize(Footer, 12, 0.4)
-    MakeIcon("crown", Footer, 24, C.Yellow, UDim2.fromOffset(12, 16))
+    MakeIcon(IsVip and "crown" or "person", Footer, 24, IsVip and C.Yellow or C.Gray, UDim2.fromOffset(12, 16))
     Text(Footer, "v2.0.0", UDim2.fromOffset(46, 10), UDim2.new(1, -50, 0, 18), 11, C.White, BOLD)
-    Text(Footer, "Premium Edition", UDim2.fromOffset(46, 28), UDim2.new(1, -50, 0, 16), 10, C.Gray)
+    Text(Footer, IsVip and "Premium Edition" or "Free Edition", UDim2.fromOffset(46, 28), UDim2.new(1, -50, 0, 16), 10, C.Gray)
 
     ----------------------------------------------------------
     -- CONTENT + HEADER
@@ -1680,10 +2011,11 @@ local function Launch()
         Parent = Content,
     })
     Panelize(Pill, 12, 0.5)
-    Pill:FindFirstChildOfClass("UIStroke").Color = C.Yellow
+    local planColor = IsVip and C.Yellow or C.Gray
+    Pill:FindFirstChildOfClass("UIStroke").Color = planColor
     Pill:FindFirstChildOfClass("UIStroke").Transparency = 0.65
-    MakeIcon("crown", Pill, 22, C.Yellow, UDim2.fromOffset(12, 9))
-    Text(Pill, "Premium User", UDim2.fromOffset(44, 0), UDim2.new(1, -48, 1, 0), 13, C.Yellow, BOLD)
+    MakeIcon(IsVip and "crown" or "person", Pill, 22, planColor, UDim2.fromOffset(12, 9))
+    Text(Pill, IsVip and "Premium User" or "Free User", UDim2.fromOffset(44, 0), UDim2.new(1, -48, 1, 0), 13, planColor, BOLD)
 
     local CloseBtn = New("TextButton", {
         Size = UDim2.fromOffset(34, 34),
@@ -2389,6 +2721,7 @@ local function Launch()
     InfoRow(SystemPage, "Player ID", tostring(Player.UserId), 3)
     InfoRow(SystemPage, "Map", MapLabel, 4)
     InfoRow(SystemPage, "Place ID", tostring(game.PlaceId), 5)
+    InfoRow(SystemPage, "Access", IsVip and "VIP" or "Free", 6)
 
     ----------------------------------------------------------
     -- FLY PANEL
@@ -2827,7 +3160,7 @@ local function Launch()
     end)
     NoBtn.ZIndex = 302
 
-    Action(SystemPage, "UNLOAD YVONE HUB", 6, function()
+    Action(SystemPage, "UNLOAD YVONE HUB", 7, function()
         Modal.Visible = true
     end)
 
@@ -2949,7 +3282,7 @@ local function Launch()
     SelectTab("Home")
 
     TopToast("YVONE Hub", "Welcome back!")
-    Notify("Map detected", MapLabel .. " is supported.")
+    Notify("Map detected", MapLabel .. " (" .. (IsVip and "VIP" or "Free") .. ")")
 
     if IsAtok then
         warn("[YVONE] Di map Atok tidak ada ESP Atok (mob). Hanya ESP Drawer yang tersedia.")
@@ -3013,12 +3346,188 @@ local function Launch()
 end
 
 --==============================================================
--- LAUNCH BUTTON
+-- ACCESS SELECTION (FREE / VIP) + LAUNCH
 --==============================================================
 
-LaunchButton.MouseButton1Click:Connect(function()
+local function StartLaunch(vip)
     if State.Launched then return end
+    IsVip = vip
     Tween(LoadCard, 0.2, { Size = UDim2.fromOffset(360, 240) })
     task.wait(0.2)
     Launch()
-end)
+end
+
+local function BuildAccessSelect()
+    FitLoadScale()
+    LoadStatus.Visible = false
+    LoadBar.Visible = false
+    Tween(LoadCard, 0.3, { Size = UDim2.fromOffset(440, 310) })
+
+    local SelectView = New("Frame", {
+        Size = UDim2.new(1, -40, 0, 170),
+        Position = UDim2.fromOffset(20, 126),
+        BackgroundTransparency = 1,
+        Parent = LoadCard,
+    })
+
+    local PassView = New("Frame", {
+        Size = UDim2.new(1, -40, 0, 170),
+        Position = UDim2.fromOffset(20, 126),
+        BackgroundTransparency = 1,
+        Visible = false,
+        Parent = LoadCard,
+    })
+
+    ----------------------------------------------------------
+    -- select view
+    ----------------------------------------------------------
+
+    Text(SelectView, "Choose your access", UDim2.fromOffset(0, 0), UDim2.new(1, 0, 0, 20), 12, C.Gray, BOLD, Enum.TextXAlignment.Center)
+
+    local function OptionCard(side, iconName, iconColor, title, desc, tag, accent, onClick)
+        local card = New("TextButton", {
+            Size = UDim2.new(0.5, -6, 0, 136),
+            Position = (side == 0) and UDim2.fromOffset(0, 28) or UDim2.new(0.5, 6, 0, 28),
+            Text = "",
+            AutoButtonColor = false,
+            Parent = SelectView,
+        })
+        Panelize(card, 14, 0.35)
+        local st = card:FindFirstChildOfClass("UIStroke")
+
+        local ic = New("Frame", {
+            Size = UDim2.fromOffset(44, 44),
+            Position = UDim2.new(0.5, -22, 0, 14),
+            BackgroundColor3 = C.Card2,
+            Parent = card,
+        })
+        Round(ic, 22)
+        MakeIcon(iconName, ic, 22, iconColor, CENTER_POS, CENTER)
+
+        Text(card, title, UDim2.fromOffset(0, 64), UDim2.new(1, 0, 0, 20), 14, accent, BOLD, Enum.TextXAlignment.Center)
+
+        local d = Text(card, desc, UDim2.fromOffset(10, 86), UDim2.new(1, -20, 0, 28), 10, C.Gray, FONT, Enum.TextXAlignment.Center)
+        d.TextWrapped = true
+        d.TextYAlignment = Enum.TextYAlignment.Top
+
+        Text(card, tag, UDim2.fromOffset(0, 114), UDim2.new(1, 0, 0, 16), 9, accent, BOLD, Enum.TextXAlignment.Center)
+
+        card.MouseEnter:Connect(function()
+            Tween(st, 0.15, { Color = accent, Transparency = 0 })
+        end)
+        card.MouseLeave:Connect(function()
+            Tween(st, 0.15, { Color = C.Stroke, Transparency = 0.35 })
+        end)
+        card.MouseButton1Click:Connect(onClick)
+    end
+
+    ----------------------------------------------------------
+    -- password view
+    ----------------------------------------------------------
+
+    MakeIcon("crown", PassView, 20, C.Yellow, UDim2.new(0.5, -66, 0, 1))
+    Text(PassView, "VIP Access", UDim2.fromOffset(0, 0), UDim2.new(1, 0, 0, 22), 16, C.Yellow, BOLD, Enum.TextXAlignment.Center)
+    Text(PassView, "Enter the password for instant teleport", UDim2.fromOffset(0, 24), UDim2.new(1, 0, 0, 18), 11, C.Gray, FONT, Enum.TextXAlignment.Center)
+
+    local box = New("TextBox", {
+        Size = UDim2.new(1, 0, 0, 42),
+        Position = UDim2.fromOffset(0, 52),
+        BackgroundColor3 = C.Card,
+        Text = "",
+        PlaceholderText = "Password",
+        PlaceholderColor3 = C.Muted,
+        TextColor3 = C.White,
+        TextSize = 18,
+        Font = BOLD,
+        ClearTextOnFocus = false,
+        TextXAlignment = Enum.TextXAlignment.Center,
+        Parent = PassView,
+    })
+    Round(box, 10)
+    local boxStroke = Stroke(box, C.Stroke, 1.2, 0.2)
+
+    local msg = Text(PassView, "", UDim2.fromOffset(0, 98), UDim2.new(1, 0, 0, 18), 11, C.Red, BOLD, Enum.TextXAlignment.Center)
+
+    -- mask typed characters with *
+    local real = ""
+    local masking = false
+    box:GetPropertyChangedSignal("Text"):Connect(function()
+        if masking then return end
+        masking = true
+        local t = box.Text
+        if #t > #real then
+            real = real .. string.sub(t, #real + 1)
+        elseif #t < #real then
+            real = string.sub(real, 1, #t)
+        end
+        box.Text = string.rep("*", #real)
+        masking = false
+    end)
+
+    local unlocking = false
+
+    local function TryUnlock()
+        if unlocking then return end
+
+        if real == VIP_PASSWORD then
+            unlocking = true
+            msg.TextColor3 = C.Green
+            msg.Text = "Access granted"
+            boxStroke.Color = C.Green
+            task.wait(0.5)
+            StartLaunch(true)
+        else
+            msg.TextColor3 = C.Red
+            msg.Text = "Password salah, coba lagi."
+            boxStroke.Color = C.Red
+
+            real = ""
+            masking = true
+            box.Text = ""
+            masking = false
+
+            for i = 1, 4 do
+                box.Position = UDim2.fromOffset((i % 2 == 0) and -6 or 6, 52)
+                task.wait(0.04)
+            end
+            box.Position = UDim2.fromOffset(0, 52)
+        end
+    end
+
+    box.FocusLost:Connect(function(enterPressed)
+        if enterPressed then TryUnlock() end
+    end)
+
+    Btn(PassView, "BACK", UDim2.new(0.38, -6, 0, 40), UDim2.fromOffset(0, 124), function()
+        if unlocking then return end
+        real = ""
+        masking = true
+        box.Text = ""
+        masking = false
+        msg.Text = ""
+        boxStroke.Color = C.Stroke
+        PassView.Visible = false
+        SelectView.Visible = true
+    end)
+
+    Btn(PassView, "UNLOCK VIP", UDim2.new(0.62, -6, 0, 40), UDim2.new(0.38, 6, 0, 124), TryUnlock, true)
+
+    ----------------------------------------------------------
+    -- cards
+    ----------------------------------------------------------
+
+    OptionCard(0, "person", C.Gray, "Free User", "All features, 2s wait on teleport", "NO PASSWORD", C.White, function()
+        StartLaunch(false)
+    end)
+
+    OptionCard(1, "crown", C.Yellow, "VIP User", "All features, instant teleport", "PASSWORD REQUIRED", C.Yellow, function()
+        SelectView.Visible = false
+        PassView.Visible = true
+        task.defer(function()
+            pcall(function() box:CaptureFocus() end)
+        end)
+    end)
+end
+
+OnLoadingDone = BuildAccessSelect
+if LoadingReady then BuildAccessSelect() end
