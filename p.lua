@@ -1104,16 +1104,16 @@ local function ScanESP()
     local char = Character()
 
     for _, inst in ipairs(Workspace:GetDescendants()) do
-        if not ESPObjects[inst] and not (char and inst:IsDescendantOf(char)) then
-            local cat = Classify(inst)
-            if cat and CategoryEnabled(cat) then
-                local part = GetPart(inst)
-                if part and (root.Position - part.Position).Magnitude <= MAX_DISTANCE then
-                    CreateESP(inst)
-                end
+    if not ESPObjects[inst] and not (char and inst:IsDescendantOf(char)) then
+        local cat = Classify(inst)
+        if cat and CategoryEnabled(cat) and not IsInsideDrawer(inst) then
+            local part = GetPart(inst)
+            if part and (root.Position - part.Position).Magnitude <= MAX_DISTANCE then
+                CreateESP(inst)
             end
         end
     end
+end
 end
 
 local function RefreshESP()
@@ -1216,6 +1216,21 @@ local function InSafeZone(part, zones)
     return false
 end
 
+-- true kalau inst berada di dalam Model bernama "drawer" (ancestor chain).
+-- Key/note yang masih "di dalam" drawer tidak akan di-ESP / di-teleport.
+local function IsInsideDrawer(inst)
+    local n = inst.Parent
+    while n and n ~= Workspace do
+        if (n:IsA("Model") or n:IsA("BasePart")) then
+            if string.find(string.lower(n.Name), "drawer", 1, true) then
+                return true
+            end
+        end
+        n = n.Parent
+    end
+    return false
+end
+
 local function RefreshTargets()
     if os.clock() - TargetCache.Time < 2 then return end
     TargetCache.Time = os.clock()
@@ -1250,14 +1265,14 @@ local function RefreshTargets()
                     end
                 end
             else
-                local cat = GetCategory(inst.Name)
-                if cat and cat ~= "OPAH" then
-                    local part = GetPart(inst)
-                    if part then
-                        table.insert(found, { Part = part, Cat = cat })
-                    end
-                end
-            end
+    local cat = GetCategory(inst.Name)
+    if cat and cat ~= "OPAH" then
+        local part = GetPart(inst)
+        if part and not IsInsideDrawer(inst) then
+            table.insert(found, { Part = part, Cat = cat })
+        end
+    end
+end
         end
     end
 
@@ -3200,18 +3215,19 @@ local function Launch()
         if not nameOk then return end
 
         task.delay(0.3, function()
-            if not MainGui or not MainGui.Parent then return end
-            if not inst.Parent or ESPObjects[inst] then return end
+    if not MainGui or not MainGui.Parent then return end
+    if not inst.Parent or ESPObjects[inst] then return end
 
-            local cat = Classify(inst)
-            if not cat or not CategoryEnabled(cat) then return end
+    local cat = Classify(inst)
+    if not cat or not CategoryEnabled(cat) then return end
+    if IsInsideDrawer(inst) then return end
 
-            local root = Root()
-            local part = GetPart(inst)
-            if root and part and (root.Position - part.Position).Magnitude <= MAX_DISTANCE then
-                CreateESP(inst)
-            end
-        end)
+    local root = Root()
+    local part = GetPart(inst)
+    if root and part and (root.Position - part.Position).Magnitude <= MAX_DISTANCE then
+        CreateESP(inst)
+    end
+end)
     end))
 
     Track(Workspace.DescendantRemoving:Connect(function(inst)
