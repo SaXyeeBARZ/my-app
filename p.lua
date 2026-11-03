@@ -1,39 +1,9 @@
 --!nocheck
 --[[
-    YVONE HUB | BLACK EDITION (DUAL GAME SYSTEM + RANDOM TELEPORT)
-    UI 100% Preserved.
-    Opah Place IDs: 101051454784523 & 91246277860636
-    Atok Place IDs: 104798140293332 & 88236825351515
+    YVONE HUB | BLACK EDITION
+    Drawn icons (no emoji) / Auto Farm panel / Bottom nav
+    For your own Roblox experience.
 ]]
-
---==============================================================
--- SECURITY & GAME CONFIGURATION
---==============================================================
-
-local OPAH_PLACES = {
-    [101051454784523] = true,
-    [91246277860636] = true
-}
-
-local ATOK_PLACES = {
-    [104798140293332] = true,
-    [88236825351515] = true
-}
-
-local CurrentGame = nil
-
-if OPAH_PLACES[game.PlaceId] then
-    CurrentGame = "Opah"
-elseif ATOK_PLACES[game.PlaceId] then
-    CurrentGame = "Atok"
-else
-    task.spawn(function()
-        pcall(function()
-            game.Players.LocalPlayer:Kick("Maaf, script ini hanya mendukung game Opah dan Atok.")
-        end)
-    end)
-    return
-end
 
 --==============================================================
 -- SERVICES
@@ -47,6 +17,51 @@ local Workspace = game:GetService("Workspace")
 
 local Player = Players.LocalPlayer
 local PlayerGui = Player:WaitForChild("PlayerGui")
+
+--==============================================================
+-- MAP DETECTION (unsupported maps are kicked)
+--==============================================================
+
+local OPAH_IDS = {
+    [101051454784523] = true,
+    [91246277860636] = true,
+}
+
+local ATOK_IDS = {
+    [104798140293332] = true,
+    [88236825351515] = true,
+}
+
+local function MatchId(set)
+    return set[game.PlaceId] == true or set[game.GameId] == true
+end
+
+local MapMode = nil
+if MatchId(OPAH_IDS) then
+    MapMode = "Opah"
+elseif MatchId(ATOK_IDS) then
+    MapMode = "Atok"
+end
+
+if not MapMode then
+    pcall(function()
+        Player:Kick("YVONE HUB: map ini tidak didukung oleh script.")
+    end)
+    return
+end
+
+local IsAtok = MapMode == "Atok"
+
+-- safe zone part/model names (Atok uses "Atok only", falls back to "safezone")
+local SAFE_KEYS = IsAtok and { "atok only", "safezone" } or { "safezone" }
+
+local function NameHasSafe(name)
+    local n = string.lower(name)
+    for _, k in ipairs(SAFE_KEYS) do
+        if string.find(n, k, 1, true) then return true end
+    end
+    return false
+end
 
 for _, name in ipairs({ "YvoneHub", "YvoneLoading" }) do
     local old = PlayerGui:FindFirstChild(name)
@@ -90,6 +105,7 @@ local State = {
     ESP_Name = true,
     ESP_Box = true,
     ESP_Distance = true,
+    ESP_Mob = false,
 
     AutoFarm = false,
     PreviousESP = nil,
@@ -419,6 +435,13 @@ local function MakeIcon(name, parent, size, color, pos, anchor)
         Line(0.33, 0.68, 0.54, 0.68)
     end
 
+    I.drawer = function()
+        Rect(0.12, 0.16, 0.76, 0.68, 0.1, false)
+        Line(0.12, 0.5, 0.88, 0.5)
+        Rect(0.4, 0.28, 0.2, 0.08, 0.5, true)
+        Rect(0.4, 0.64, 0.2, 0.08, 0.5, true)
+    end
+
     I.shield = function()
         Line(0.5, 0.08, 0.84, 0.2)
         Line(0.84, 0.2, 0.84, 0.5)
@@ -732,9 +755,6 @@ local function GetCategory(name)
     if string.find(n, "opah") then
         return "OPAH", C.Red
     end
-    if string.find(n, "atok") then
-        return "ATOK", C.Red
-    end
     if string.find(n, "key") then
         if string.find(n, "red") then return "RED KEY", C.Red
         elseif string.find(n, "blue") then return "BLUE KEY", Color3.fromRGB(105, 165, 235)
@@ -745,28 +765,40 @@ local function GetCategory(name)
     if string.find(n, "note") or string.find(n, "passcode") then
         return "PASSCODE NOTE", C.Yellow
     end
-    if string.find(n, "pita") then
-        return "PITA", Color3.fromRGB(0, 255, 255)
-    end
-    if string.find(n, "tape") then
-        return "TAPE", Color3.fromRGB(255, 105, 180)
-    end
-    if string.find(n, "drawer") then
-        return "DRAWER", C.Purple
-    end
     return nil
 end
 
 local function GetPart(inst)
     if inst:IsA("BasePart") then return inst end
     if inst:IsA("Model") or inst:IsA("Tool") then
+        if IsAtok and inst:IsA("Model") then
+            local hrp = inst:FindFirstChild("HumanoidRootPart") or inst.PrimaryPart
+            if hrp and hrp:IsA("BasePart") then return hrp end
+        end
         return inst:FindFirstChildWhichIsA("BasePart", true)
     end
     return nil
 end
 
+local function MobAlive(inst)
+    local hum = inst:FindFirstChildOfClass("Humanoid")
+    return hum ~= nil and hum.Health > 0
+end
+
+-- Opah: unchanged name-based categories. Atok: walking mobs (NPC humanoids).
+local function Classify(inst)
+    if IsAtok then
+        if inst:IsA("Model") and MobAlive(inst) and not Players:GetPlayerFromCharacter(inst) then
+            return "MOB", C.Red
+        end
+        return nil
+    end
+    return GetCategory(inst.Name)
+end
+
 local function CategoryEnabled(cat)
-    if cat == "OPAH" or cat == "ATOK" then return State.ESP_Opah end
+    if cat == "MOB" then return State.ESP_Mob end
+    if cat == "OPAH" then return State.ESP_Opah end
     return State.ESP_Item
 end
 
@@ -788,8 +820,13 @@ end
 local function CreateESP(inst)
     if not inst or not inst.Parent or ESPObjects[inst] then return end
 
-    local category, color = GetCategory(inst.Name)
+    local category, color = Classify(inst)
     if not category or not CategoryEnabled(category) then return end
+
+    local display = category
+    if category == "MOB" then
+        display = "MOB: " .. string.upper(string.sub(inst.Name, 1, 16))
+    end
 
     local part = GetPart(inst)
     if not part then return end
@@ -840,6 +877,7 @@ local function CreateESP(inst)
         Label = label,
         Box = box,
         Category = category,
+        Display = display,
         Part = part,
     }
 end
@@ -853,14 +891,14 @@ local function ApplyESPFlags()
 end
 
 local function ScanESP()
-    if not (State.ESP_Opah or State.ESP_Item) then return end
+    if not (State.ESP_Opah or State.ESP_Item or State.ESP_Mob) then return end
     local root = Root()
     if not root then return end
     local char = Character()
 
     for _, inst in ipairs(Workspace:GetDescendants()) do
         if not ESPObjects[inst] and not (char and inst:IsDescendantOf(char)) then
-            local cat = GetCategory(inst.Name)
+            local cat = Classify(inst)
             if cat and CategoryEnabled(cat) then
                 local part = GetPart(inst)
                 if part and (root.Position - part.Position).Magnitude <= MAX_DISTANCE then
@@ -883,6 +921,8 @@ local function UpdateESP()
     for inst, data in pairs(ESPObjects) do
         if not inst.Parent then
             RemoveESP(inst)
+        elseif data.Category == "MOB" and not MobAlive(inst) then
+            RemoveESP(inst)
         else
             local part = data.Part
             if not part or not part.Parent then
@@ -898,10 +938,11 @@ local function UpdateESP()
                 else
                     data.Billboard.Enabled = State.ESP_Name
                     data.Box.Visible = State.ESP_Box
+                    local shown = data.Display or data.Category
                     if State.ESP_Distance then
-                        data.Label.Text = string.format("%s  [%dm]", data.Category, math.floor(dist * 0.28))
+                        data.Label.Text = string.format("%s  [%dm]", shown, math.floor(dist * 0.28))
                     else
-                        data.Label.Text = data.Category
+                        data.Label.Text = shown
                     end
                 end
             end
@@ -913,27 +954,49 @@ end
 -- TARGETS / TELEPORT / AUTO TELEPORT
 --==============================================================
 
-local TargetCache = { Key = {}, Note = {}, Time = 0 }
+local TargetCache = { Key = {}, Note = {}, Drawer = {}, Time = 0 }
+
+local function ZoneInfo(inst)
+    if inst:IsA("BasePart") then return inst.CFrame, inst.Size end
+    local ok, cf, size = pcall(function() return inst:GetBoundingBox() end)
+    if ok then return cf, size end
+    return nil
+end
+
+local function IsZoneInstance(inst)
+    if not (inst:IsA("BasePart") or (IsAtok and inst:IsA("Model"))) then return false end
+    return NameHasSafe(inst.Name)
+end
 
 local function InSafeZone(part, zones)
+    -- inside an instance named like the safe zone
     local node = part
     while node and node ~= Workspace do
-        if string.find(string.lower(node.Name), "safezone") then
-            return true
-        end
+        if NameHasSafe(node.Name) then return true end
         node = node.Parent
     end
 
+    -- inside the bounding box of a safe zone
     for _, zone in ipairs(zones) do
-        if zone.Parent then
-            local rel = zone.CFrame:PointToObjectSpace(part.Position)
-            local half = zone.Size / 2
-            if math.abs(rel.X) <= half.X + 2
-                and math.abs(rel.Y) <= half.Y + 6
-                and math.abs(rel.Z) <= half.Z + 2 then
-                return true
-            end
+        local rel = zone.CFrame:PointToObjectSpace(part.Position)
+        local half = zone.Size / 2
+        if math.abs(rel.X) <= half.X + 2
+            and math.abs(rel.Y) <= half.Y + 6
+            and math.abs(rel.Z) <= half.Z + 2 then
+            return true
         end
+    end
+    return false
+end
+
+local function IsDrawerName(inst)
+    return (inst:IsA("Model") or inst:IsA("BasePart"))
+        and string.find(string.lower(inst.Name), "drawer", 1, true) ~= nil
+end
+
+local function HasDrawerDescendant(inst)
+    for _, d in ipairs(inst:GetDescendants()) do
+        if IsDrawerName(d) then return true end
     end
     return false
 end
@@ -943,22 +1006,33 @@ local function RefreshTargets()
     TargetCache.Time = os.clock()
     TargetCache.Key = {}
     TargetCache.Note = {}
+    TargetCache.Drawer = {}
 
     local char = Character()
     local zones = {}
     local found = {}
 
     for _, inst in ipairs(Workspace:GetDescendants()) do
-        if inst:IsA("BasePart") and string.find(string.lower(inst.Name), "safezone") then
-            table.insert(zones, inst)
+        if IsZoneInstance(inst) then
+            local cf, size = ZoneInfo(inst)
+            if cf then table.insert(zones, { CFrame = cf, Size = size }) end
         end
 
         if not (char and inst:IsDescendantOf(char)) then
-            local cat = GetCategory(inst.Name)
-            if cat and cat ~= "OPAH" and cat ~= "ATOK" and cat ~= "DRAWER" and cat ~= "PITA" and cat ~= "TAPE" then
-                local part = GetPart(inst)
-                if part then
-                    table.insert(found, { Part = part, Cat = cat })
+            if IsAtok then
+                if IsDrawerName(inst) and not (inst:IsA("Model") and HasDrawerDescendant(inst)) then
+                    local part = GetPart(inst)
+                    if part then
+                        table.insert(found, { Part = part, Cat = "DRAWER" })
+                    end
+                end
+            else
+                local cat = GetCategory(inst.Name)
+                if cat and cat ~= "OPAH" then
+                    local part = GetPart(inst)
+                    if part then
+                        table.insert(found, { Part = part, Cat = cat })
+                    end
                 end
             end
         end
@@ -966,7 +1040,18 @@ local function RefreshTargets()
 
     for _, item in ipairs(found) do
         if not InSafeZone(item.Part, zones) then
-            if string.find(item.Cat, "KEY") then
+            if item.Cat == "DRAWER" then
+                local duplicate = false
+                for _, other in ipairs(TargetCache.Drawer) do
+                    if (other.Position - item.Part.Position).Magnitude < 3 then
+                        duplicate = true
+                        break
+                    end
+                end
+                if not duplicate then
+                    table.insert(TargetCache.Drawer, item.Part)
+                end
+            elseif string.find(item.Cat, "KEY") then
                 table.insert(TargetCache.Key, item.Part)
             elseif string.find(item.Cat, "NOTE") then
                 table.insert(TargetCache.Note, item.Part)
@@ -996,36 +1081,35 @@ local function FindNearest(kind)
     return best
 end
 
-local function GetRandomAtokTarget()
-    local targets = {}
-    for _, inst in ipairs(Workspace:GetDescendants()) do
-        if inst:IsA("Model") or inst:IsA("BasePart") then
-            local n = string.lower(inst.Name)
-            if string.find(n, "drawer") or string.find(n, "pita") or string.find(n, "tape") then
-                local part = GetPart(inst)
-                if part then
-                    table.insert(targets, part)
-                end
-            end
-        end
-    end
-    if #targets > 0 then
-        return targets[math.random(1, #targets)]
-    end
-    return nil
+local function ZonePos(inst)
+    if inst:IsA("BasePart") then return inst.Position end
+    return inst:GetPivot().Position
 end
 
 local function SafePosition()
     if CachedSafeZone and CachedSafeZone.Parent then
-        return CachedSafeZone.Position
+        return ZonePos(CachedSafeZone)
     end
     CachedSafeZone = nil
+
+    local best, bestRank
     for _, o in ipairs(Workspace:GetDescendants()) do
-        if o:IsA("BasePart") and string.find(string.lower(o.Name), "safezone") then
-            CachedSafeZone = o
-            return o.Position
+        if o:IsA("BasePart") or (IsAtok and o:IsA("Model")) then
+            local n = string.lower(o.Name)
+            for rank, k in ipairs(SAFE_KEYS) do
+                if string.find(n, k, 1, true) then
+                    if not bestRank or rank < bestRank then
+                        best = o
+                        bestRank = rank
+                    end
+                    break
+                end
+            end
         end
     end
+
+    CachedSafeZone = best
+    if best then return ZonePos(best) end
     return nil
 end
 
@@ -1074,31 +1158,74 @@ local function SmartTeleport()
     TeleportBusy = true
     TargetCache.Time = 0
 
-    local target = nil
-    local label = ""
+    local target = FindNearest("key")
+    local label = "Key"
 
-    if CurrentGame == "Atok" then
-        target = GetRandomAtokTarget()
-        label = "Atok Target (Drawer/Pita/Tape)"
-    else
-        target = FindNearest("key")
-        label = "Key"
-        if not target then
-            target = FindNearest("note")
-            label = "Note"
-        end
+    if not target then
+        target = FindNearest("note")
+        label = "Note"
     end
 
     if target then
         root.CFrame = CFrame.new(target.Position + Vector3.new(0, 3, 0))
         SetFarmStatus("Teleported to " .. label, C.Green)
-        Notify("Teleport", "Pindah ke " .. label)
     else
-        SetFarmStatus("No target found", C.Yellow)
-        Notify("Teleport", "Target tidak ditemukan.", "err")
+        SetFarmStatus("No key or note found", C.Yellow)
     end
 
     task.delay(0.6, function() TeleportBusy = false end)
+end
+
+local LastDrawer
+
+-- Atok: random drawer on every click
+local function TeleportDrawer(notify)
+    if TeleportBusy then return end
+
+    local root = Root()
+    if not root then
+        SetFarmStatus("Waiting for character", C.Gray)
+        if notify then Notify("Teleport", "Character belum siap.", "err") end
+        return
+    end
+
+    TeleportBusy = true
+    TargetCache.Time = 0
+    RefreshTargets()
+
+    local list = {}
+    for _, part in ipairs(TargetCache.Drawer) do
+        if part.Parent then table.insert(list, part) end
+    end
+
+    if #list == 0 then
+        SetFarmStatus("No drawer found", C.Yellow)
+        if notify then Notify("Teleport", "Drawer tidak ditemukan.", "err") end
+    else
+        local pick = list[math.random(#list)]
+        if #list > 1 then
+            local tries = 0
+            while pick == LastDrawer and tries < 8 do
+                pick = list[math.random(#list)]
+                tries = tries + 1
+            end
+        end
+        LastDrawer = pick
+
+        root.CFrame = CFrame.new(pick.Position + Vector3.new(0, 3, 0))
+        SetFarmStatus(string.format("Random drawer (%d found)", #list), C.Green)
+        if notify then Notify("Teleport", "Teleported to a random drawer.") end
+    end
+
+    task.delay(0.6, function() TeleportBusy = false end)
+end
+
+local function FarmTeleport()
+    if IsAtok then
+        TeleportDrawer(false)
+    else
+        SmartTeleport()
+    end
 end
 
 --==============================================================
@@ -1258,7 +1385,11 @@ local function Launch()
         Parent = PlayerGui,
     })
 
-    local BottomNav
+    local BottomNav -- forward declaration (used by SetUIVisible)
+
+    ----------------------------------------------------------
+    -- WINDOW
+    ----------------------------------------------------------
 
     MainWindow = New("Frame", {
         Name = "MainWindow",
@@ -1279,6 +1410,10 @@ local function Launch()
         if BottomNav then BottomNav.Visible = v end
         if OpenButton then OpenButton.Visible = not v end
     end
+
+    ----------------------------------------------------------
+    -- SIDEBAR
+    ----------------------------------------------------------
 
     local Sidebar = New("Frame", {
         Size = UDim2.new(0, 170, 1, 0),
@@ -1326,6 +1461,10 @@ local function Launch()
     Text(Footer, "v2.0.0", UDim2.fromOffset(46, 10), UDim2.new(1, -50, 0, 18), 11, C.White, BOLD)
     Text(Footer, "Premium Edition", UDim2.fromOffset(46, 28), UDim2.new(1, -50, 0, 16), 10, C.Gray)
 
+    ----------------------------------------------------------
+    -- CONTENT + HEADER
+    ----------------------------------------------------------
+
     local Content = New("Frame", {
         Size = UDim2.new(1, -170, 1, 0),
         Position = UDim2.fromOffset(170, 0),
@@ -1334,6 +1473,7 @@ local function Launch()
         Parent = MainWindow,
     })
 
+    -- drag handle (header strip, created first so buttons stay on top)
     local DragStrip = New("Frame", {
         Size = UDim2.new(1, 0, 0, 74),
         BackgroundTransparency = 1,
@@ -1376,6 +1516,10 @@ local function Launch()
     CloseBtn.MouseButton1Click:Connect(function()
         SetUIVisible(false)
     end)
+
+    ----------------------------------------------------------
+    -- PAGES
+    ----------------------------------------------------------
 
     local TabList = {
         { "Home", "home", "Welcome Back!", "Control everything, your way." },
@@ -1475,6 +1619,10 @@ local function Launch()
         Tabs[info[1]] = { Button = b, Stroke = st, Bar = bar, Icon = icon, Label = label }
         b.MouseButton1Click:Connect(function() SelectTab(info[1]) end)
     end
+
+    ----------------------------------------------------------
+    -- COMPONENTS
+    ----------------------------------------------------------
 
     local ON_POS = UDim2.new(1, -21, 0.5, -9)
     local OFF_POS = UDim2.new(0, 3, 0.5, -9)
@@ -1662,6 +1810,10 @@ local function Launch()
         return { Set = function(v) SetPercent((v - min) / (max - min), true) end }
     end
 
+    ----------------------------------------------------------
+    -- HOME PAGE
+    ----------------------------------------------------------
+
     local AutoFarmSwitch
     local Home = Pages.Home
 
@@ -1672,6 +1824,7 @@ local function Launch()
         Parent = Home,
     })
 
+    -- Banner
     local Banner = New("Frame", {
         Size = UDim2.new(1, 0, 0, 190),
         BackgroundColor3 = C.White,
@@ -1751,6 +1904,7 @@ local function Launch()
         BarStatus.Text = "All modules loaded"
     end)
 
+    -- Info cards
     local function InfoCard(i, iconName, iconColor, title, value, sub, valueColor)
         local card = New("Frame", {
             Size = UDim2.new(1 / 3, -8, 0, 82),
@@ -1774,9 +1928,10 @@ local function Launch()
     end
 
     InfoCard(1, "person", C.Gray, "Player Info", Player.DisplayName, "ID: " .. Player.UserId)
-    InfoCard(2, "gamepad", C.Gray, "Game Info", CurrentGame, "Experience")
+    InfoCard(2, "gamepad", C.Gray, "Game Info", MapMode, "Map supported")
     InfoCard(3, "dot", C.Green, "Status", "Ready", "All systems online", C.Green)
 
+    -- Quick access
     local Quick = New("Frame", {
         Size = UDim2.new(1, 0, 0, 104),
         Position = UDim2.fromOffset(0, 298),
@@ -1862,19 +2017,33 @@ local function Launch()
         if AutoFarmSwitch then AutoFarmSwitch.Set(not AutoFarmSwitch.Get()) end
     end)
 
+    ----------------------------------------------------------
+    -- ESP PAGE
+    ----------------------------------------------------------
+
     local ESPPage = Pages.ESP
 
-    local ESPOpahSwitch = Toggle(ESPPage, "ESP Target", "Highlight the target character.", State.ESP_Opah, 1, function(v)
-        State.ESP_Opah = v
-        ApplyESPFlags()
-        ScanESP()
-    end)
+    local ESPOpahSwitch, ESPItemSwitch, ESPMobSwitch
 
-    local ESPItemSwitch = Toggle(ESPPage, "ESP Item (Key/Pita/Note)", "Find items and passcodes.", State.ESP_Item, 2, function(v)
-        State.ESP_Item = v
-        ApplyESPFlags()
-        ScanESP()
-    end)
+    if IsAtok then
+        ESPMobSwitch = Toggle(ESPPage, "ESP Mob", "Highlight walking mobs.", State.ESP_Mob, 1, function(v)
+            State.ESP_Mob = v
+            ApplyESPFlags()
+            ScanESP()
+        end)
+    else
+        ESPOpahSwitch = Toggle(ESPPage, "ESP Opah", "Highlight the Opah character.", State.ESP_Opah, 1, function(v)
+            State.ESP_Opah = v
+            ApplyESPFlags()
+            ScanESP()
+        end)
+
+        ESPItemSwitch = Toggle(ESPPage, "ESP Key / Note", "Find keys, notes and passcodes.", State.ESP_Item, 2, function(v)
+            State.ESP_Item = v
+            ApplyESPFlags()
+            ScanESP()
+        end)
+    end
 
     Toggle(ESPPage, "Show Name", "Display the target label.", State.ESP_Name, 3, function(v)
         State.ESP_Name = v
@@ -1899,11 +2068,17 @@ local function Launch()
     Action(ESPPage, "DISABLE ALL ESP", 7, function()
         State.ESP_Opah = false
         State.ESP_Item = false
-        ESPOpahSwitch.Set(false, true)
-        ESPItemSwitch.Set(false, true)
+        State.ESP_Mob = false
+        if ESPOpahSwitch then ESPOpahSwitch.Set(false, true) end
+        if ESPItemSwitch then ESPItemSwitch.Set(false, true) end
+        if ESPMobSwitch then ESPMobSwitch.Set(false, true) end
         ClearESP()
         Notify("ESP", "All ESP disabled.")
     end)
+
+    ----------------------------------------------------------
+    -- MOVEMENT PAGE
+    ----------------------------------------------------------
 
     local MovePage = Pages.Movement
 
@@ -1923,17 +2098,26 @@ local function Launch()
         UpdateSpeed()
     end)
 
+    ----------------------------------------------------------
+    -- UTILITY PAGE
+    ----------------------------------------------------------
+
     local UtilPage = Pages.Utility
 
     AutoFarmSwitch = Toggle(UtilPage, "Auto Farm Mode", "Show the farm panel and item visibility.", false, 1, function(v)
         State.AutoFarm = v
 
         if v then
-            State.PreviousESP = { Opah = State.ESP_Opah, Item = State.ESP_Item }
-            State.ESP_Opah = true
-            State.ESP_Item = true
-            ESPOpahSwitch.Set(true, true)
-            ESPItemSwitch.Set(true, true)
+            State.PreviousESP = { Opah = State.ESP_Opah, Item = State.ESP_Item, Mob = State.ESP_Mob }
+            if IsAtok then
+                State.ESP_Mob = true
+                if ESPMobSwitch then ESPMobSwitch.Set(true, true) end
+            else
+                State.ESP_Opah = true
+                State.ESP_Item = true
+                ESPOpahSwitch.Set(true, true)
+                ESPItemSwitch.Set(true, true)
+            end
             RefreshESP()
 
             if FarmPanel then FarmPanel.Visible = true end
@@ -1945,8 +2129,10 @@ local function Launch()
             if State.PreviousESP then
                 State.ESP_Opah = State.PreviousESP.Opah
                 State.ESP_Item = State.PreviousESP.Item
-                ESPOpahSwitch.Set(State.ESP_Opah, true)
-                ESPItemSwitch.Set(State.ESP_Item, true)
+                State.ESP_Mob = State.PreviousESP.Mob
+                if ESPOpahSwitch then ESPOpahSwitch.Set(State.ESP_Opah, true) end
+                if ESPItemSwitch then ESPItemSwitch.Set(State.ESP_Item, true) end
+                if ESPMobSwitch then ESPMobSwitch.Set(State.ESP_Mob, true) end
                 ApplyESPFlags()
                 ScanESP()
             end
@@ -1957,13 +2143,21 @@ local function Launch()
     end)
 
     Action(UtilPage, "TELEPORT TO SAFE ZONE", 2, TeleportSafe)
-    Action(UtilPage, "TELEPORT TO KEY", 3, function() TeleportItem("key") end)
-    Action(UtilPage, "TELEPORT TO NOTE", 4, function() TeleportItem("note") end)
+    if IsAtok then
+        Action(UtilPage, "TELEPORT TO RANDOM DRAWER", 3, function() TeleportDrawer(true) end)
+    else
+        Action(UtilPage, "TELEPORT TO KEY", 3, function() TeleportItem("key") end)
+        Action(UtilPage, "TELEPORT TO NOTE", 4, function() TeleportItem("note") end)
+    end
     Action(UtilPage, "REFRESH TARGET SCAN", 5, function()
         RefreshESP()
         TargetCache.Time = 0
         Notify("Scanner", "Target scan completed.")
     end)
+
+    ----------------------------------------------------------
+    -- SETTINGS / INTERFACE / SYSTEM PAGES
+    ----------------------------------------------------------
 
     local SettingsPage = Pages.Settings
 
@@ -1999,6 +2193,12 @@ local function Launch()
     InfoRow(SystemPage, "Version", "v2.0.0 Premium Edition", 1)
     InfoRow(SystemPage, "Platform", UIS.TouchEnabled and "Android / Touch" or "Desktop", 2)
     InfoRow(SystemPage, "Player ID", tostring(Player.UserId), 3)
+    InfoRow(SystemPage, "Map", MapMode, 4)
+    InfoRow(SystemPage, "Place ID", tostring(game.PlaceId), 5)
+
+    ----------------------------------------------------------
+    -- FLY PANEL
+    ----------------------------------------------------------
 
     FlyPanel = New("Frame", {
         AnchorPoint = Vector2.new(1, 0.5),
@@ -2098,6 +2298,10 @@ local function Launch()
         end
     end))
 
+    ----------------------------------------------------------
+    -- AUTO FARM PANEL
+    ----------------------------------------------------------
+
     FarmPanel = New("Frame", {
         AnchorPoint = Vector2.new(0, 0.5),
         Size = UDim2.fromOffset(250, 270),
@@ -2164,6 +2368,7 @@ local function Launch()
         Parent = FarmPanel,
     })
 
+    -- status card
     local StatusCard = New("Frame", {
         Size = UDim2.new(1, -32, 0, 46),
         Position = UDim2.fromOffset(16, 68),
@@ -2183,6 +2388,7 @@ local function Launch()
     Round(FarmStatusDot, 4)
     FarmStatusText = Text(StatusCard, "Idle", UDim2.fromOffset(32, 20), UDim2.new(1, -40, 0, 20), 12, C.White, BOLD)
 
+    -- auto teleport button (manual: one click = one teleport)
     local AutoBtn = New("TextButton", {
         Size = UDim2.new(1, -32, 0, 58),
         Position = UDim2.fromOffset(16, 124),
@@ -2191,14 +2397,15 @@ local function Launch()
         Parent = FarmPanel,
     })
     Panelize(AutoBtn, 12, 0.4)
-    MakeIcon("key", AutoBtn, 22, C.Yellow, UDim2.fromOffset(14, 18))
-    Text(AutoBtn, "Auto Teleport", UDim2.fromOffset(46, 10), UDim2.new(1, -90, 0, 20), 13, C.White, BOLD)
-    Text(AutoBtn, "Random Drawer/Pita/Tape", UDim2.fromOffset(46, 30), UDim2.new(1, -90, 0, 18), 10, C.Gray)
+    MakeIcon(IsAtok and "drawer" or "key", AutoBtn, 22, C.Yellow, UDim2.fromOffset(14, 18))
+    Text(AutoBtn, IsAtok and "Teleport Drawer" or "Auto Teleport", UDim2.fromOffset(46, 10), UDim2.new(1, -90, 0, 20), 13, C.White, BOLD)
+    Text(AutoBtn, IsAtok and "Random drawer each click" or "Key first, then Note", UDim2.fromOffset(46, 30), UDim2.new(1, -90, 0, 18), 10, C.Gray)
     MakeIcon("arrow", AutoBtn, 16, C.Gray, UDim2.new(1, -32, 0.5, -8))
     AutoBtn.MouseEnter:Connect(function() Tween(AutoBtn, 0.12, { BackgroundColor3 = Color3.fromRGB(205, 206, 212) }) end)
     AutoBtn.MouseLeave:Connect(function() Tween(AutoBtn, 0.12, { BackgroundColor3 = C.White }) end)
-    AutoBtn.MouseButton1Click:Connect(SmartTeleport)
+    AutoBtn.MouseButton1Click:Connect(FarmTeleport)
 
+    -- safe zone button
     local SafeBtn = New("TextButton", {
         Size = UDim2.new(1, -32, 0, 58),
         Position = UDim2.fromOffset(16, 192),
@@ -2210,10 +2417,14 @@ local function Launch()
     Round(SafeBtn, 12)
     MakeIcon("shield", SafeBtn, 24, C.Bg, UDim2.fromOffset(14, 17))
     Text(SafeBtn, "Safe Zone", UDim2.fromOffset(48, 10), UDim2.new(1, -60, 0, 20), 13, C.Bg, BOLD)
-    Text(SafeBtn, "Teleport to the safe area", UDim2.fromOffset(48, 30), UDim2.new(1, -60, 0, 18), 10, Color3.fromRGB(70, 72, 82))
+    Text(SafeBtn, IsAtok and "Zone: Atok only" or "Teleport to the safe area", UDim2.fromOffset(48, 30), UDim2.new(1, -60, 0, 18), 10, Color3.fromRGB(70, 72, 82))
     SafeBtn.MouseEnter:Connect(function() Tween(SafeBtn, 0.12, { BackgroundColor3 = C.Gray }) end)
     SafeBtn.MouseLeave:Connect(function() Tween(SafeBtn, 0.12, { BackgroundColor3 = C.White }) end)
     SafeBtn.MouseButton1Click:Connect(TeleportSafe)
+
+    ----------------------------------------------------------
+    -- BOTTOM NAV
+    ----------------------------------------------------------
 
     BottomNav = New("Frame", {
         AnchorPoint = Vector2.new(0.5, 1),
@@ -2251,6 +2462,10 @@ local function Launch()
         b.MouseButton1Click:Connect(function() SelectTab(info[1]) end)
     end
 
+    ----------------------------------------------------------
+    -- FPS / PING PILLS
+    ----------------------------------------------------------
+
     StatsHolder = New("Frame", {
         AnchorPoint = Vector2.new(1, 0),
         Size = UDim2.fromOffset(250, 34),
@@ -2281,6 +2496,10 @@ local function Launch()
     local PingLabel = Text(PingPill, "Ping: --", UDim2.fromScale(0, 0), UDim2.fromScale(1, 1), 14, C.White, BOLD, Enum.TextXAlignment.Center)
     PingLabel.RichText = true
 
+    ----------------------------------------------------------
+    -- OPEN BUTTON (shown while the UI is closed)
+    ----------------------------------------------------------
+
     OpenButton = New("TextButton", {
         Size = UDim2.fromOffset(52, 52),
         Position = UDim2.new(0, 18, 0.5, -26),
@@ -2300,6 +2519,10 @@ local function Launch()
     OpenButton.MouseButton1Click:Connect(function()
         SetUIVisible(true)
     end)
+
+    ----------------------------------------------------------
+    -- UNLOAD CONFIRMATION + CLEANUP
+    ----------------------------------------------------------
 
     local Modal = New("Frame", {
         Size = UDim2.fromScale(1, 1),
@@ -2354,9 +2577,13 @@ local function Launch()
     end)
     NoBtn.ZIndex = 302
 
-    Action(SystemPage, "UNLOAD YVONE HUB", 4, function()
+    Action(SystemPage, "UNLOAD YVONE HUB", 6, function()
         Modal.Visible = true
     end)
+
+    ----------------------------------------------------------
+    -- LOOPS
+    ----------------------------------------------------------
 
     local frames = 0
     local fps = 0
@@ -2395,14 +2622,14 @@ local function Launch()
     task.spawn(function()
         while MainGui and MainGui.Parent do
             task.wait(UPDATE_INTERVAL)
-            if State.ESP_Opah or State.ESP_Item then UpdateESP() end
+            if State.ESP_Opah or State.ESP_Item or State.ESP_Mob then UpdateESP() end
         end
     end)
 
     task.spawn(function()
         while MainGui and MainGui.Parent do
             task.wait(SCAN_INTERVAL)
-            if State.ESP_Opah or State.ESP_Item then ScanESP() end
+            if State.ESP_Opah or State.ESP_Item or State.ESP_Mob then ScanESP() end
         end
     end)
 
@@ -2429,9 +2656,13 @@ local function Launch()
         if not MainGui or not MainGui.Parent then return end
 
         UpdateSpeed()
-        if State.ESP_Opah or State.ESP_Item then RefreshESP() end
+        if State.ESP_Opah or State.ESP_Item or State.ESP_Mob then RefreshESP() end
         Notify("Character", "Character successfully loaded.")
     end))
+
+    ----------------------------------------------------------
+    -- SCALE + INIT
+    ----------------------------------------------------------
 
     ApplyScale()
     Track(Workspace:GetPropertyChangedSignal("CurrentCamera"):Connect(ApplyScale))
@@ -2442,7 +2673,12 @@ local function Launch()
     SelectTab("Home")
 
     TopToast("YVONE Hub", "Welcome back!")
+    Notify("Map detected", MapMode .. " is supported.")
 end
+
+--==============================================================
+-- LAUNCH BUTTON
+--==============================================================
 
 LaunchButton.MouseButton1Click:Connect(function()
     if State.Launched then return end
