@@ -113,26 +113,68 @@ end
 -- Format URL raw: https://raw.githubusercontent.com/OWNER/REPO/BRANCH/PATH
 local VIP_KEYS_URL = "https://raw.githubusercontent.com/SaXyeeBARZ/xxxcrotx-functionx/refs/heads/main/key.json"
 
--- Fungsi HTTP: pakai executor (Delta) kalau ada, fallback ke HttpService
-local function HttpGet(url)
-    -- Delta / Synapse / executor lain
-    local req = (typeof(request) == "function" and request)
-        or (typeof(http_request) == "function" and http_request)
-        or (syn and syn.request)
-        or (http and http.request)
+-- Kumpulkan semua fungsi request yang tersedia di executor (Delta, Synapse, dst.)
+local function GetRequestFns()
+    local list = {}
+    local function add(fn)
+        if type(fn) == "function" then table.insert(list, fn) end
+    end
+    pcall(function() add(request) end)
+    pcall(function() add(http_request) end)
+    pcall(function() add(syn and syn.request) end)
+    pcall(function() add(http and http.request) end)
+    pcall(function() add(_G and _G.request) end)
+    return list
+end
 
-    if req then
-        local ok, res = pcall(req, { Url = url, Method = "GET" })
-        if ok and res and res.Body then return res.Body end
-        return nil
+-- Coba satu URL pakai semua method. Return body string atau nil.
+local function FetchOnce(url)
+    for _, fn in ipairs(GetRequestFns()) do
+        local ok, res = pcall(fn, { Url = url, Method = "GET" })
+        if ok and type(res) == "table" and type(res.Body) == "string" and #res.Body > 0 then
+            if type(res.StatusCode) == "number" then
+                if res.StatusCode >= 200 and res.StatusCode < 300 then
+                    return res.Body
+                end
+            else
+                return res.Body
+            end
+        end
     end
 
-    -- Fallback: HttpService (butuh HttpEnabled + allowlist; biasanya TIDAK bisa
-    -- akses raw.githubusercontent.com dari Studio, tapi dicoba saja)
+    -- Fallback: HttpService (hanya jalan kalau HttpEnabled + allowlist)
     local ok, body = pcall(function()
         return game:GetService("HttpService"):GetAsync(url, true)
     end)
-    if ok then return body end
+    if ok and type(body) == "string" and #body > 0 then
+        return body
+    end
+
+    return nil
+end
+
+-- Fetch dengan multi-fallback: /refs/heads/ variant + cache-bust + tanpa cache-bust
+local function HttpGet(baseUrl)
+    local variants = { baseUrl }
+
+    -- raw.githubusercontent.com menerima /refs/heads/main/... DAN /main/...
+    local simplified = string.gsub(baseUrl, "/refs/heads/", "/")
+    if simplified ~= baseUrl then
+        table.insert(variants, simplified)
+    end
+
+    local ts = tostring(os.time())
+
+    for _, url in ipairs(variants) do
+        local sep = string.find(url, "?", 1, true) and "&" or "?"
+
+        local body = FetchOnce(url .. sep .. "t=" .. ts)
+        if body then return body end
+
+        body = FetchOnce(url)
+        if body then return body end
+    end
+
     return nil
 end
 
@@ -176,7 +218,7 @@ local function VerifyVIP(key)
         return true, "vip", nil
     end
 
-    local body = HttpGet(VIP_KEYS_URL .. "?t=" .. tostring(os.time()))
+    local body = HttpGet(VIP_KEYS_URL)
     if not body then
         return false, nil, "Gagal menghubungi server key."
     end
@@ -3468,30 +3510,44 @@ local function BuildAccessSelect()
 
     local function TryUnlock()
         if unlocking then return end
+        unlocking = true
 
-        if real == VIP_PASSWORD then
-            unlocking = true
-            msg.TextColor3 = C.Green
-            msg.Text = "Access granted"
-            boxStroke.Color = C.Green
-            task.wait(0.5)
-            StartLaunch(true)
-        else
-            msg.TextColor3 = C.Red
-            msg.Text = "Password salah, coba lagi."
-            boxStroke.Color = C.Red
+        -- Snapshot input, biar user typing selama HTTP tidak mengganggu
+        local submittedKey = real
 
-            real = ""
-            masking = true
-            box.Text = ""
-            masking = false
+        msg.TextColor3 = C.Gray
+        msg.Text = "Memeriksa key..."
+        boxStroke.Color = C.Stroke
 
-            for i = 1, 4 do
-                box.Position = UDim2.fromOffset((i % 2 == 0) and -6 or 6, 52)
-                task.wait(0.04)
+        -- HTTP bisa memakan waktu; jalankan di task.spawn agar UI tidak freeze
+        task.spawn(function()
+            local ok, _plan, reason = VerifyVIP(submittedKey)
+
+            if ok then
+                msg.TextColor3 = C.Green
+                msg.Text = "Access granted"
+                boxStroke.Color = C.Green
+                task.wait(0.5)
+                StartLaunch(true)
+            else
+                msg.TextColor3 = C.Red
+                msg.Text = reason or "Key salah, coba lagi."
+                boxStroke.Color = C.Red
+
+                real = ""
+                masking = true
+                box.Text = ""
+                masking = false
+
+                for i = 1, 4 do
+                    box.Position = UDim2.fromOffset((i % 2 == 0) and -6 or 6, 52)
+                    task.wait(0.04)
+                end
+                box.Position = UDim2.fromOffset(0, 52)
+
+                unlocking = false
             end
-            box.Position = UDim2.fromOffset(0, 52)
-        end
+        end)
     end
 
     box.FocusLost:Connect(function(enterPressed)
