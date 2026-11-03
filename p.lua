@@ -1,27 +1,35 @@
 --!nocheck
 --[[
-    YVONE HUB | BLACK EDITION
-    Drawn icons (no emoji) / Auto Farm panel / Bottom nav
-    For your own Roblox experience.
+    YVONE HUB | BLACK EDITION (MULTI-GAME SUPPORT)
+    Game Opah: 100% Original
+    Game Atok: Auto Farm Prioritas Key > Tape/Pita > Note
 ]]
 
 --==============================================================
--- SECURITY CHECK (PLACE ID WHITELIST)
+-- SECURITY & GAME CONFIGURATION
 --==============================================================
 
-local ALLOWED_PLACES = {
+-- GANTI DENGAN PLACE ID GAME ATOK
+local ATOK_PLACE_ID = 1234567890 
+
+local OPAH_PLACES = {
     [101051454784523] = true,
     [91246277860636] = true
 }
 
-if not ALLOWED_PLACES[game.PlaceId] then
-    -- Menggunakan task.spawn agar tidak menghentikan thread utama secara kasar
+local CurrentGame = nil
+
+if OPAH_PLACES[game.PlaceId] then
+    CurrentGame = "Opah"
+elseif game.PlaceId == ATOK_PLACE_ID then
+    CurrentGame = "Atok"
+else
     task.spawn(function()
         pcall(function()
-            game.Players.LocalPlayer:Kick("Maaf, Place ID ini belum disupport di script ini.")
+            game.Players.LocalPlayer:Kick("Maaf, script ini hanya mendukung game Opah dan Atok.")
         end)
     end)
-    return -- Menghentikan script agar tidak dieksekusi lebih lanjut
+    return
 end
 
 --==============================================================
