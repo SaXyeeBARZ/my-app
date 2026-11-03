@@ -1,6 +1,6 @@
 --!nocheck
 --[[
-    YVONE HUB | BLACK EDITION (MULTI-GAME SUPPORT)
+    YVONE HUB | BLACK EDITION (DUAL GAME SYSTEM + RANDOM TELEPORT)
     UI 100% Preserved.
     Opah Place IDs: 101051454784523 & 91246277860636
     Atok Place IDs: 104798140293332 & 88236825351515
@@ -745,8 +745,14 @@ local function GetCategory(name)
     if string.find(n, "note") or string.find(n, "passcode") then
         return "PASSCODE NOTE", C.Yellow
     end
-    if string.find(n, "pita") or string.find(n, "tape") then
-        return "PITA/TAPE", C.Cyan
+    if string.find(n, "pita") then
+        return "PITA", Color3.fromRGB(0, 255, 255)
+    end
+    if string.find(n, "tape") then
+        return "TAPE", Color3.fromRGB(255, 105, 180)
+    end
+    if string.find(n, "drawer") then
+        return "DRAWER", C.Purple
     end
     return nil
 end
@@ -910,7 +916,6 @@ end
 local TargetCache = { Key = {}, Note = {}, Time = 0 }
 
 local function InSafeZone(part, zones)
-    -- inside an instance whose name contains "safezone"
     local node = part
     while node and node ~= Workspace do
         if string.find(string.lower(node.Name), "safezone") then
@@ -919,7 +924,6 @@ local function InSafeZone(part, zones)
         node = node.Parent
     end
 
-    -- inside the bounding box of a safezone part
     for _, zone in ipairs(zones) do
         if zone.Parent then
             local rel = zone.CFrame:PointToObjectSpace(part.Position)
@@ -951,7 +955,7 @@ local function RefreshTargets()
 
         if not (char and inst:IsDescendantOf(char)) then
             local cat = GetCategory(inst.Name)
-            if cat and cat ~= "OPAH" and cat ~= "ATOK" then
+            if cat and cat ~= "OPAH" and cat ~= "ATOK" and cat ~= "DRAWER" and cat ~= "PITA" and cat ~= "TAPE" then
                 local part = GetPart(inst)
                 if part then
                     table.insert(found, { Part = part, Cat = cat })
@@ -990,6 +994,25 @@ local function FindNearest(kind)
         end
     end
     return best
+end
+
+local function GetRandomAtokTarget()
+    local targets = {}
+    for _, inst in ipairs(Workspace:GetDescendants()) do
+        if inst:IsA("Model") or inst:IsA("BasePart") then
+            local n = string.lower(inst.Name)
+            if string.find(n, "drawer") or string.find(n, "pita") or string.find(n, "tape") then
+                local part = GetPart(inst)
+                if part then
+                    table.insert(targets, part)
+                end
+            end
+        end
+    end
+    if #targets > 0 then
+        return targets[math.random(1, #targets)]
+    end
+    return nil
 end
 
 local function SafePosition()
@@ -1051,19 +1074,28 @@ local function SmartTeleport()
     TeleportBusy = true
     TargetCache.Time = 0
 
-    local target = FindNearest("key")
-    local label = "Key"
+    local target = nil
+    local label = ""
 
-    if not target then
-        target = FindNearest("note")
-        label = "Note"
+    if CurrentGame == "Atok" then
+        target = GetRandomAtokTarget()
+        label = "Atok Target (Drawer/Pita/Tape)"
+    else
+        target = FindNearest("key")
+        label = "Key"
+        if not target then
+            target = FindNearest("note")
+            label = "Note"
+        end
     end
 
     if target then
         root.CFrame = CFrame.new(target.Position + Vector3.new(0, 3, 0))
         SetFarmStatus("Teleported to " .. label, C.Green)
+        Notify("Teleport", "Pindah ke " .. label)
     else
-        SetFarmStatus("No key or note found", C.Yellow)
+        SetFarmStatus("No target found", C.Yellow)
+        Notify("Teleport", "Target tidak ditemukan.", "err")
     end
 
     task.delay(0.6, function() TeleportBusy = false end)
@@ -1226,11 +1258,7 @@ local function Launch()
         Parent = PlayerGui,
     })
 
-    local BottomNav -- forward declaration (used by SetUIVisible)
-
-    ----------------------------------------------------------
-    -- WINDOW
-    ----------------------------------------------------------
+    local BottomNav
 
     MainWindow = New("Frame", {
         Name = "MainWindow",
@@ -1251,10 +1279,6 @@ local function Launch()
         if BottomNav then BottomNav.Visible = v end
         if OpenButton then OpenButton.Visible = not v end
     end
-
-    ----------------------------------------------------------
-    -- SIDEBAR
-    ----------------------------------------------------------
 
     local Sidebar = New("Frame", {
         Size = UDim2.new(0, 170, 1, 0),
@@ -1302,10 +1326,6 @@ local function Launch()
     Text(Footer, "v2.0.0", UDim2.fromOffset(46, 10), UDim2.new(1, -50, 0, 18), 11, C.White, BOLD)
     Text(Footer, "Premium Edition", UDim2.fromOffset(46, 28), UDim2.new(1, -50, 0, 16), 10, C.Gray)
 
-    ----------------------------------------------------------
-    -- CONTENT + HEADER
-    ----------------------------------------------------------
-
     local Content = New("Frame", {
         Size = UDim2.new(1, -170, 1, 0),
         Position = UDim2.fromOffset(170, 0),
@@ -1314,7 +1334,6 @@ local function Launch()
         Parent = MainWindow,
     })
 
-    -- drag handle (header strip, created first so buttons stay on top)
     local DragStrip = New("Frame", {
         Size = UDim2.new(1, 0, 0, 74),
         BackgroundTransparency = 1,
@@ -1357,10 +1376,6 @@ local function Launch()
     CloseBtn.MouseButton1Click:Connect(function()
         SetUIVisible(false)
     end)
-
-    ----------------------------------------------------------
-    -- PAGES
-    ----------------------------------------------------------
 
     local TabList = {
         { "Home", "home", "Welcome Back!", "Control everything, your way." },
@@ -1460,10 +1475,6 @@ local function Launch()
         Tabs[info[1]] = { Button = b, Stroke = st, Bar = bar, Icon = icon, Label = label }
         b.MouseButton1Click:Connect(function() SelectTab(info[1]) end)
     end
-
-    ----------------------------------------------------------
-    -- COMPONENTS
-    ----------------------------------------------------------
 
     local ON_POS = UDim2.new(1, -21, 0.5, -9)
     local OFF_POS = UDim2.new(0, 3, 0.5, -9)
@@ -1651,10 +1662,6 @@ local function Launch()
         return { Set = function(v) SetPercent((v - min) / (max - min), true) end }
     end
 
-    ----------------------------------------------------------
-    -- HOME PAGE
-    ----------------------------------------------------------
-
     local AutoFarmSwitch
     local Home = Pages.Home
 
@@ -1665,7 +1672,6 @@ local function Launch()
         Parent = Home,
     })
 
-    -- Banner
     local Banner = New("Frame", {
         Size = UDim2.new(1, 0, 0, 190),
         BackgroundColor3 = C.White,
@@ -1745,7 +1751,6 @@ local function Launch()
         BarStatus.Text = "All modules loaded"
     end)
 
-    -- Info cards
     local function InfoCard(i, iconName, iconColor, title, value, sub, valueColor)
         local card = New("Frame", {
             Size = UDim2.new(1 / 3, -8, 0, 82),
@@ -1769,10 +1774,9 @@ local function Launch()
     end
 
     InfoCard(1, "person", C.Gray, "Player Info", Player.DisplayName, "ID: " .. Player.UserId)
-    InfoCard(2, "gamepad", C.Gray, "Game Info", "Roblox", "Experience")
+    InfoCard(2, "gamepad", C.Gray, "Game Info", CurrentGame, "Experience")
     InfoCard(3, "dot", C.Green, "Status", "Ready", "All systems online", C.Green)
 
-    -- Quick access
     local Quick = New("Frame", {
         Size = UDim2.new(1, 0, 0, 104),
         Position = UDim2.fromOffset(0, 298),
@@ -1858,10 +1862,6 @@ local function Launch()
         if AutoFarmSwitch then AutoFarmSwitch.Set(not AutoFarmSwitch.Get()) end
     end)
 
-    ----------------------------------------------------------
-    -- ESP PAGE
-    ----------------------------------------------------------
-
     local ESPPage = Pages.ESP
 
     local ESPOpahSwitch = Toggle(ESPPage, "ESP Target", "Highlight the target character.", State.ESP_Opah, 1, function(v)
@@ -1905,10 +1905,6 @@ local function Launch()
         Notify("ESP", "All ESP disabled.")
     end)
 
-    ----------------------------------------------------------
-    -- MOVEMENT PAGE
-    ----------------------------------------------------------
-
     local MovePage = Pages.Movement
 
     local WalkSlider = Slider(MovePage, "Walk Speed", 16, 100, State.Speed, 1, function(v)
@@ -1926,10 +1922,6 @@ local function Launch()
         WalkSlider.Set(16)
         UpdateSpeed()
     end)
-
-    ----------------------------------------------------------
-    -- UTILITY PAGE
-    ----------------------------------------------------------
 
     local UtilPage = Pages.Utility
 
@@ -1973,10 +1965,6 @@ local function Launch()
         Notify("Scanner", "Target scan completed.")
     end)
 
-    ----------------------------------------------------------
-    -- SETTINGS / INTERFACE / SYSTEM PAGES
-    ----------------------------------------------------------
-
     local SettingsPage = Pages.Settings
 
     Toggle(SettingsPage, "UI Animations", "Enable smooth transitions.", true, 1, function(v)
@@ -2011,10 +1999,6 @@ local function Launch()
     InfoRow(SystemPage, "Version", "v2.0.0 Premium Edition", 1)
     InfoRow(SystemPage, "Platform", UIS.TouchEnabled and "Android / Touch" or "Desktop", 2)
     InfoRow(SystemPage, "Player ID", tostring(Player.UserId), 3)
-
-    ----------------------------------------------------------
-    -- FLY PANEL
-    ----------------------------------------------------------
 
     FlyPanel = New("Frame", {
         AnchorPoint = Vector2.new(1, 0.5),
@@ -2114,10 +2098,6 @@ local function Launch()
         end
     end))
 
-    ----------------------------------------------------------
-    -- AUTO FARM PANEL
-    ----------------------------------------------------------
-
     FarmPanel = New("Frame", {
         AnchorPoint = Vector2.new(0, 0.5),
         Size = UDim2.fromOffset(250, 270),
@@ -2184,7 +2164,6 @@ local function Launch()
         Parent = FarmPanel,
     })
 
-    -- status card
     local StatusCard = New("Frame", {
         Size = UDim2.new(1, -32, 0, 46),
         Position = UDim2.fromOffset(16, 68),
@@ -2204,7 +2183,6 @@ local function Launch()
     Round(FarmStatusDot, 4)
     FarmStatusText = Text(StatusCard, "Idle", UDim2.fromOffset(32, 20), UDim2.new(1, -40, 0, 20), 12, C.White, BOLD)
 
-    -- auto teleport button (manual: one click = one teleport)
     local AutoBtn = New("TextButton", {
         Size = UDim2.new(1, -32, 0, 58),
         Position = UDim2.fromOffset(16, 124),
@@ -2215,13 +2193,12 @@ local function Launch()
     Panelize(AutoBtn, 12, 0.4)
     MakeIcon("key", AutoBtn, 22, C.Yellow, UDim2.fromOffset(14, 18))
     Text(AutoBtn, "Auto Teleport", UDim2.fromOffset(46, 10), UDim2.new(1, -90, 0, 20), 13, C.White, BOLD)
-    Text(AutoBtn, "Key first, then Note", UDim2.fromOffset(46, 30), UDim2.new(1, -90, 0, 18), 10, C.Gray)
+    Text(AutoBtn, "Random Drawer/Pita/Tape", UDim2.fromOffset(46, 30), UDim2.new(1, -90, 0, 18), 10, C.Gray)
     MakeIcon("arrow", AutoBtn, 16, C.Gray, UDim2.new(1, -32, 0.5, -8))
     AutoBtn.MouseEnter:Connect(function() Tween(AutoBtn, 0.12, { BackgroundColor3 = Color3.fromRGB(205, 206, 212) }) end)
     AutoBtn.MouseLeave:Connect(function() Tween(AutoBtn, 0.12, { BackgroundColor3 = C.White }) end)
     AutoBtn.MouseButton1Click:Connect(SmartTeleport)
 
-    -- safe zone button
     local SafeBtn = New("TextButton", {
         Size = UDim2.new(1, -32, 0, 58),
         Position = UDim2.fromOffset(16, 192),
@@ -2237,10 +2214,6 @@ local function Launch()
     SafeBtn.MouseEnter:Connect(function() Tween(SafeBtn, 0.12, { BackgroundColor3 = C.Gray }) end)
     SafeBtn.MouseLeave:Connect(function() Tween(SafeBtn, 0.12, { BackgroundColor3 = C.White }) end)
     SafeBtn.MouseButton1Click:Connect(TeleportSafe)
-
-    ----------------------------------------------------------
-    -- BOTTOM NAV
-    ----------------------------------------------------------
 
     BottomNav = New("Frame", {
         AnchorPoint = Vector2.new(0.5, 1),
@@ -2278,10 +2251,6 @@ local function Launch()
         b.MouseButton1Click:Connect(function() SelectTab(info[1]) end)
     end
 
-    ----------------------------------------------------------
-    -- FPS / PING PILLS
-    ----------------------------------------------------------
-
     StatsHolder = New("Frame", {
         AnchorPoint = Vector2.new(1, 0),
         Size = UDim2.fromOffset(250, 34),
@@ -2312,10 +2281,6 @@ local function Launch()
     local PingLabel = Text(PingPill, "Ping: --", UDim2.fromScale(0, 0), UDim2.fromScale(1, 1), 14, C.White, BOLD, Enum.TextXAlignment.Center)
     PingLabel.RichText = true
 
-    ----------------------------------------------------------
-    -- OPEN BUTTON (shown while the UI is closed)
-    ----------------------------------------------------------
-
     OpenButton = New("TextButton", {
         Size = UDim2.fromOffset(52, 52),
         Position = UDim2.new(0, 18, 0.5, -26),
@@ -2335,10 +2300,6 @@ local function Launch()
     OpenButton.MouseButton1Click:Connect(function()
         SetUIVisible(true)
     end)
-
-    ----------------------------------------------------------
-    -- UNLOAD CONFIRMATION + CLEANUP
-    ----------------------------------------------------------
 
     local Modal = New("Frame", {
         Size = UDim2.fromScale(1, 1),
@@ -2396,10 +2357,6 @@ local function Launch()
     Action(SystemPage, "UNLOAD YVONE HUB", 4, function()
         Modal.Visible = true
     end)
-
-    ----------------------------------------------------------
-    -- LOOPS
-    ----------------------------------------------------------
 
     local frames = 0
     local fps = 0
@@ -2476,10 +2433,6 @@ local function Launch()
         Notify("Character", "Character successfully loaded.")
     end))
 
-    ----------------------------------------------------------
-    -- SCALE + INIT
-    ----------------------------------------------------------
-
     ApplyScale()
     Track(Workspace:GetPropertyChangedSignal("CurrentCamera"):Connect(ApplyScale))
     if Workspace.CurrentCamera then
@@ -2490,10 +2443,6 @@ local function Launch()
 
     TopToast("YVONE Hub", "Welcome back!")
 end
-
---==============================================================
--- LAUNCH BUTTON
---==============================================================
 
 LaunchButton.MouseButton1Click:Connect(function()
     if State.Launched then return end
