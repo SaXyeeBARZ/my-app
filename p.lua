@@ -1,27 +1,30 @@
 --!nocheck
 --[[
     YVONE HUB | BLACK EDITION (MULTI-GAME SUPPORT)
-    Game Opah: 100% Original
-    Game Atok: Auto Farm Prioritas Key > Tape/Pita > Note
+    UI 100% Preserved.
+    Opah Place IDs: 101051454784523 & 91246277860636
+    Atok Place IDs: 104798140293332 & 88236825351515
 ]]
 
 --==============================================================
 -- SECURITY & GAME CONFIGURATION
 --==============================================================
 
--- GANTI DENGAN PLACE ID GAME ATOK
-local ATOK_PLACE_ID = 1234567890 
-
 local OPAH_PLACES = {
     [101051454784523] = true,
     [91246277860636] = true
+}
+
+local ATOK_PLACES = {
+    [104798140293332] = true,
+    [88236825351515] = true
 }
 
 local CurrentGame = nil
 
 if OPAH_PLACES[game.PlaceId] then
     CurrentGame = "Opah"
-elseif game.PlaceId == ATOK_PLACE_ID then
+elseif ATOK_PLACES[game.PlaceId] then
     CurrentGame = "Atok"
 else
     task.spawn(function()
@@ -729,6 +732,9 @@ local function GetCategory(name)
     if string.find(n, "opah") then
         return "OPAH", C.Red
     end
+    if string.find(n, "atok") then
+        return "ATOK", C.Red
+    end
     if string.find(n, "key") then
         if string.find(n, "red") then return "RED KEY", C.Red
         elseif string.find(n, "blue") then return "BLUE KEY", Color3.fromRGB(105, 165, 235)
@@ -738,6 +744,9 @@ local function GetCategory(name)
     end
     if string.find(n, "note") or string.find(n, "passcode") then
         return "PASSCODE NOTE", C.Yellow
+    end
+    if string.find(n, "pita") or string.find(n, "tape") then
+        return "PITA/TAPE", C.Cyan
     end
     return nil
 end
@@ -751,7 +760,7 @@ local function GetPart(inst)
 end
 
 local function CategoryEnabled(cat)
-    if cat == "OPAH" then return State.ESP_Opah end
+    if cat == "OPAH" or cat == "ATOK" then return State.ESP_Opah end
     return State.ESP_Item
 end
 
@@ -942,7 +951,7 @@ local function RefreshTargets()
 
         if not (char and inst:IsDescendantOf(char)) then
             local cat = GetCategory(inst.Name)
-            if cat and cat ~= "OPAH" then
+            if cat and cat ~= "OPAH" and cat ~= "ATOK" then
                 local part = GetPart(inst)
                 if part then
                     table.insert(found, { Part = part, Cat = cat })
@@ -1855,13 +1864,13 @@ local function Launch()
 
     local ESPPage = Pages.ESP
 
-    local ESPOpahSwitch = Toggle(ESPPage, "ESP Opah", "Highlight the Opah character.", State.ESP_Opah, 1, function(v)
+    local ESPOpahSwitch = Toggle(ESPPage, "ESP Target", "Highlight the target character.", State.ESP_Opah, 1, function(v)
         State.ESP_Opah = v
         ApplyESPFlags()
         ScanESP()
     end)
 
-    local ESPItemSwitch = Toggle(ESPPage, "ESP Key / Note", "Find keys, notes and passcodes.", State.ESP_Item, 2, function(v)
+    local ESPItemSwitch = Toggle(ESPPage, "ESP Item (Key/Pita/Note)", "Find items and passcodes.", State.ESP_Item, 2, function(v)
         State.ESP_Item = v
         ApplyESPFlags()
         ScanESP()
