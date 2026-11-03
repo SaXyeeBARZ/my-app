@@ -1060,6 +1060,7 @@ end
 --==============================================================
 
 local TargetCache = { Key = {}, Note = {}, Drawer = {}, Tape = {}, Time = 0 }
+local LastTargetPart = nil
 
 local function ZoneInfo(inst)
     if inst:IsA("BasePart") then return inst.CFrame, inst.Size end
@@ -1175,19 +1176,34 @@ local function FindNearest(kind)
     else
         list = TargetCache.Note
     end
+
     local best
     local shortest = math.huge
+    local fallback
+    local fallbackShortest = math.huge
 
     for _, part in ipairs(list) do
         if part.Parent then
             local d = (root.Position - part.Position).Magnitude
-            if d < shortest then
-                shortest = d
-                best = part
+            if part ~= LastTargetPart then
+                if d < shortest then
+                    shortest = d
+                    best = part
+                end
+            else
+                if d < fallbackShortest then
+                    fallbackShortest = d
+                    fallback = part
+                end
             end
         end
     end
-    return best
+
+    local target = best or fallback
+    if target then
+        LastTargetPart = target
+    end
+    return target
 end
 
 local function PlaceAt(root, pos)
@@ -1306,8 +1322,6 @@ local function SmartTeleport()
     task.delay(0.6, function() TeleportBusy = false end)
 end
 
-local LastDrawer
-
 -- Atok: random drawer on every click
 local function TeleportDrawer(notify)
     if TeleportBusy then return end
@@ -1335,12 +1349,12 @@ local function TeleportDrawer(notify)
         local pick = list[math.random(#list)]
         if #list > 1 then
             local tries = 0
-            while pick == LastDrawer and tries < 8 do
+            while pick == LastTargetPart and tries < 8 do
                 pick = list[math.random(#list)]
                 tries = tries + 1
             end
         end
-        LastDrawer = pick
+        LastTargetPart = pick
 
         PlaceAt(root, pick.Position)
         SetFarmStatus(string.format("Random drawer (%d found)", #list), C.Green)
@@ -1349,8 +1363,6 @@ local function TeleportDrawer(notify)
 
     task.delay(0.6, function() TeleportBusy = false end)
 end
-
-local LastTape
 
 -- Atok 2: random pita / tape item on every click
 local function TeleportTape(notify)
@@ -1379,12 +1391,12 @@ local function TeleportTape(notify)
         local pick = list[math.random(#list)]
         if #list > 1 then
             local tries = 0
-            while pick == LastTape and tries < 8 do
+            while pick == LastTargetPart and tries < 8 do
                 pick = list[math.random(#list)]
                 tries = tries + 1
             end
         end
-        LastTape = pick
+        LastTargetPart = pick
 
         PlaceAt(root, pick.Position)
         SetFarmStatus(string.format("Random tape (%d found)", #list), C.Green)
