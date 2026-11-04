@@ -1,8 +1,7 @@
 --!nocheck
 --[[
-    YVONE HUB | BLACK EDITION
-    Drawn icons (no emoji) / Auto Farm panel / Bottom nav
-    For your own Roblox experience.
+    YVONE HUB | BLACK EDITION (ULTIMATE FIX)
+    Drawn icons / Auto Farm / Dynamic Mob ESP / Spawn Safe Zone
 ]]
 
 --==============================================================
@@ -22,33 +21,16 @@ local PlayerGui = Player:WaitForChild("PlayerGui")
 -- MAP DETECTION
 --==============================================================
 
-local OPAH_IDS = {
-    [101051454784523] = true,
-    [91246277860636] = true,
-}
-
-local CEKGU_IDS = {
-    [135493464782683] = true,
-    [106473672978445] = true,
-}
-
-local ATOK_IDS = {
-    [104798140293332] = true,
-    [88236825351515] = true,
-}
-
-local ATOK_TAPE_IDS = {
-    [118060380845440] = true,
-}
+local OPAH_IDS = { [101051454784523] = true, [91246277860636] = true }
+local CEKGU_IDS = { [135493464782683] = true, [106473672978445] = true }
+local ATOK_IDS = { [104798140293332] = true, [88236825351515] = true }
+local ATOK_TAPE_IDS = { [118060380845440] = true }
 
 local function MatchId(set)
     local placeId = tostring(game.PlaceId)
     local gameId = tostring(game.GameId)
-
     for k, v in pairs(set) do
-        if tostring(k) == placeId or tostring(k) == gameId then
-            return true
-        end
+        if tostring(k) == placeId or tostring(k) == gameId then return true end
     end
     return false
 end
@@ -72,35 +54,41 @@ elseif MatchId(ATOK_TAPE_IDS) then
 end
 
 if not MapMode then
-    pcall(function()
-        Player:Kick("YVONE HUB: map ini tidak didukung oleh script.")
-    end)
+    pcall(function() Player:Kick("YVONE HUB: map ini tidak didukung oleh script.") end)
     return
 end
 
 local IsAtok = MapMode == "Atok"
 
 --==============================================================
--- AUTO KICK ON DEATH (KHUSUS MAP OPAH)
+-- AUTO KICK & SPAWN POSITION
 --==============================================================
+local CekguSpawnCFrame = nil
+
 local function SetupDeathKick(char)
     local hum = char:WaitForChild("Humanoid", 5)
     if hum then
         hum.Died:Connect(function()
             if IsOpahMap then
-                pcall(function()
-                    Player:Kick("Kamu mati di map Opah! Script mengeluarkanmu otomatis (Anti-Stuck). Silakan rejoin.")
-                end)
+                pcall(function() Player:Kick("Kamu mati di map Opah! Anti-Stuck.") end)
             end
         end)
     end
 end
 
-if Player.Character then
-    SetupDeathKick(Player.Character)
-end
+if Player.Character then SetupDeathKick(Player.Character) end
 Player.CharacterAdded:Connect(SetupDeathKick)
---==============================================================
+
+-- Ambil spawn position khusus untuk Cekgu
+if IsCekguMap then
+    task.spawn(function()
+        local char = Player.Character or Player.CharacterAdded:Wait()
+        local root = char:WaitForChild("HumanoidRootPart", 10)
+        if root and not CekguSpawnCFrame then
+            CekguSpawnCFrame = root.CFrame
+        end
+    end)
+end
 
 local ATOK_SAFE_POS = Vector3.new(-265.1, 17.3, 135.2)
 
@@ -125,25 +113,16 @@ local function NameHasSafe(name)
     return false
 end
 
-local VIP_PASSWORD = "911"
-local IsVip = false
-
-for _, name in ipairs({ "YvoneHub", "YvoneLoading", "YvoneWarning" }) do
-    local old = PlayerGui:FindFirstChild(name)
-    if old then old:Destroy() end
-end
-
 --==============================================================
 -- VIP KEY VERIFICATION
 --==============================================================
-
+local VIP_PASSWORD = "911"
+local IsVip = false
 local VIP_KEYS_URL = "https://raw.githubusercontent.com/SaXyeeBARZ/xxxcrotx-functionx/refs/heads/main/key.json"
 
 local function GetRequestFns()
     local list = {}
-    local function add(fn)
-        if type(fn) == "function" then table.insert(list, fn) end
-    end
+    local function add(fn) if type(fn) == "function" then table.insert(list, fn) end end
     pcall(function() add(request) end)
     pcall(function() add(http_request) end)
     pcall(function() add(syn and syn.request) end)
@@ -157,202 +136,97 @@ local function FetchOnce(url)
         local ok, res = pcall(fn, { Url = url, Method = "GET" })
         if ok and type(res) == "table" and type(res.Body) == "string" and #res.Body > 0 then
             if type(res.StatusCode) == "number" then
-                if res.StatusCode >= 200 and res.StatusCode < 300 then
-                    return res.Body
-                end
-            else
-                return res.Body
-            end
+                if res.StatusCode >= 200 and res.StatusCode < 300 then return res.Body end
+            else return res.Body end
         end
     end
-
-    local ok, body = pcall(function()
-        return game:GetService("HttpService"):GetAsync(url, true)
-    end)
-    if ok and type(body) == "string" and #body > 0 then
-        return body
-    end
-
+    local ok, body = pcall(function() return game:GetService("HttpService"):GetAsync(url, true) end)
+    if ok and type(body) == "string" and #body > 0 then return body end
     return nil
 end
 
 local function HttpGet(baseUrl)
     local variants = { baseUrl }
-
     local simplified = string.gsub(baseUrl, "/refs/heads/", "/")
-    if simplified ~= baseUrl then
-        table.insert(variants, simplified)
-    end
-
+    if simplified ~= baseUrl then table.insert(variants, simplified) end
     local ts = tostring(os.time())
-
     for _, url in ipairs(variants) do
         local sep = string.find(url, "?", 1, true) and "&" or "?"
-
         local body = FetchOnce(url .. sep .. "t=" .. ts)
         if body then return body end
-
         body = FetchOnce(url)
         if body then return body end
     end
-
     return nil
 end
 
 local function JsonDecode(str)
-    local ok, res = pcall(function()
-        return game:GetService("HttpService"):JSONDecode(str)
-    end)
+    local ok, res = pcall(function() return game:GetService("HttpService"):JSONDecode(str) end)
     if ok then return res end
     return nil
 end
 
 local function VerifyVIP(key)
     key = tostring(key or ""):gsub("%s+", ""):upper()
-    if #key == 0 then
-        return false, nil, "Key kosong."
-    end
-
-    if key == VIP_PASSWORD then
-        return true, "vip", nil
-    end
-
+    if #key == 0 then return false, nil, "Key kosong." end
+    if key == VIP_PASSWORD then return true, "vip", nil end
     local body = HttpGet(VIP_KEYS_URL)
-    if not body then
-        return false, nil, "Gagal menghubungi server key."
-    end
-
+    if not body then return false, nil, "Gagal menghubungi server key." end
     local data = JsonDecode(body)
-    if type(data) ~= "table" then
-        return false, nil, "Format key tidak valid."
-    end
-
+    if type(data) ~= "table" then return false, nil, "Format key tidak valid." end
     local entry = data[key]
-    if entry == nil then
-        return false, nil, "Key tidak ditemukan."
-    end
-
+    if entry == nil then return false, nil, "Key tidak ditemukan." end
     return true, "vip", nil
 end
 
---==============================================================
--- THEME
---==============================================================
+for _, name in ipairs({ "YvoneHub", "YvoneLoading", "YvoneWarning" }) do
+    local old = PlayerGui:FindFirstChild(name)
+    if old then old:Destroy() end
+end
 
+--==============================================================
+-- THEME & STATE
+--==============================================================
 local C = {
-    Bg = Color3.fromRGB(8, 9, 12),
-    Panel = Color3.fromRGB(15, 16, 20),
-    Side = Color3.fromRGB(11, 12, 15),
-    Card = Color3.fromRGB(21, 22, 27),
-    Card2 = Color3.fromRGB(33, 34, 41),
-    Stroke = Color3.fromRGB(62, 64, 74),
-    White = Color3.fromRGB(246, 247, 250),
-    Gray = Color3.fromRGB(165, 168, 178),
-    Muted = Color3.fromRGB(110, 113, 123),
-    Green = Color3.fromRGB(34, 208, 120),
-    Red = Color3.fromRGB(235, 80, 85),
-    Yellow = Color3.fromRGB(255, 206, 64),
+    Bg = Color3.fromRGB(8, 9, 12), Panel = Color3.fromRGB(15, 16, 20), Side = Color3.fromRGB(11, 12, 15),
+    Card = Color3.fromRGB(21, 22, 27), Card2 = Color3.fromRGB(33, 34, 41), Stroke = Color3.fromRGB(62, 64, 74),
+    White = Color3.fromRGB(246, 247, 250), Gray = Color3.fromRGB(165, 168, 178), Muted = Color3.fromRGB(110, 113, 123),
+    Green = Color3.fromRGB(34, 208, 120), Red = Color3.fromRGB(235, 80, 85), Yellow = Color3.fromRGB(255, 206, 64),
 }
-
-local FONT = Enum.Font.Gotham
-local BOLD = Enum.Font.GothamBold
-local BLACK = Enum.Font.GothamBlack
-
---==============================================================
--- STATE
---==============================================================
+local FONT, BOLD, BLACK = Enum.Font.Gotham, Enum.Font.GothamBold, Enum.Font.GothamBlack
 
 local State = {
-    Launched = false,
-    Closing = false,
-    CurrentTab = "Home",
-
-    ESP_Opah = false,
-    ESP_Item = false,
-    ESP_Name = true,
-    ESP_Box = true,
-    ESP_Distance = true,
-    ESP_Drawer = false,
-    ESP_AtokMob = false,
-    ESP_AtokItem = false,
-    
-    ESP_CekguMob = false,
-    ESP_CekguItem = false,
-    VisitedPositions = {},
-
-    AutoFarm = false,
-    PreviousESP = nil,
-
-    Speed = 16,
-    FlySpeed = 50,
-    FlyHeight = 100,
-    Noclip = false,
-    Fly = false,
-
-    Animations = true,
-    ShowStats = true,
+    Launched = false, Closing = false, CurrentTab = "Home",
+    ESP_Item = false, ESP_Mob = false, ESP_Name = true, ESP_Box = true, ESP_Distance = true,
+    AutoFarm = false, PreviousESP = nil,
+    Speed = 16, FlySpeed = 50, FlyHeight = 100, Noclip = false, Fly = false,
+    Animations = true, ShowStats = true,
+    VisitedPositions = {}
 }
 
-local Connections = {}
-local ESPObjects = {}
-local OriginalCollision = {}
-local Scales = {}
-local FlySwitches = {}
-
+local Connections, ESPObjects, OriginalCollision, Scales, FlySwitches = {}, {}, {}, {}, {}
 local MainGui, LoadingGui, WarnGui, MainWindow, FlyPanel, FarmPanel, OpenButton, StatsHolder
 local FlyVelocity, FlyOrientation, FlyAttachment, FlyConnection
-local NoclipConnection, CachedSafeZone
-local FarmStatusText, FarmStatusDot
+local NoclipConnection, CachedSafeZone, FarmStatusText, FarmStatusDot
 local FlyHold = false
-
-local MAX_DISTANCE = 1000
-local SCAN_INTERVAL = 3
-local UPDATE_INTERVAL = 0.25
-local OPAH_CANCEL_RADIUS = 16
+local MAX_DISTANCE, SCAN_INTERVAL, UPDATE_INTERVAL, OPAH_CANCEL_RADIUS = 1000, 3, 0.25, 16
 
 local function Track(c) table.insert(Connections, c) return c end
-
-local function Disconnect(c)
-    if c then pcall(function() c:Disconnect() end) end
-end
-
-local function DisconnectAll()
-    for _, c in ipairs(Connections) do Disconnect(c) end
-    table.clear(Connections)
-end
+local function Disconnect(c) if c then pcall(function() c:Disconnect() end) end end
+local function DisconnectAll() for _, c in ipairs(Connections) do Disconnect(c) end table.clear(Connections) end
 
 --==============================================================
 -- UI HELPERS
 --==============================================================
-
 local function New(class, props, children)
     local o = Instance.new(class)
     for k, v in pairs(props or {}) do o[k] = v end
     for _, c in ipairs(children or {}) do c.Parent = o end
     return o
 end
-
-local function Round(p, r)
-    return New("UICorner", { CornerRadius = UDim.new(0, r or 10), Parent = p })
-end
-
-local function Stroke(p, color, th, tr)
-    return New("UIStroke", {
-        Color = color or C.Stroke,
-        Thickness = th or 1,
-        Transparency = tr or 0,
-        ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
-        Parent = p,
-    })
-end
-
-local function Grad(p, c0, c1, rot)
-    return New("UIGradient", {
-        Color = ColorSequence.new(c0, c1),
-        Rotation = rot or 90,
-        Parent = p,
-    })
-end
+local function Round(p, r) return New("UICorner", { CornerRadius = UDim.new(0, r or 10), Parent = p }) end
+local function Stroke(p, color, th, tr) return New("UIStroke", { Color = color or C.Stroke, Thickness = th or 1, Transparency = tr or 0, ApplyStrokeMode = Enum.ApplyStrokeMode.Border, Parent = p }) end
+local function Grad(p, c0, c1, rot) return New("UIGradient", { Color = ColorSequence.new(c0, c1), Rotation = rot or 90, Parent = p }) end
 
 local function Panelize(f, radius, strokeTr)
     f.BackgroundColor3 = C.White
@@ -363,299 +237,75 @@ end
 
 local function Tween(o, d, props)
     if not o or not o.Parent then return end
-    if not State.Animations then
-        for k, v in pairs(props) do o[k] = v end
-        return
-    end
+    if not State.Animations then for k, v in pairs(props) do o[k] = v end return end
     TweenService:Create(o, TweenInfo.new(d or 0.2, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), props):Play()
 end
 
 local function Text(parent, text, pos, size, ts, color, font, align)
     return New("TextLabel", {
-        BackgroundTransparency = 1,
-        Text = text,
-        Position = pos,
-        Size = size,
-        TextSize = ts or 12,
-        TextColor3 = color or C.White,
-        Font = font or FONT,
-        TextXAlignment = align or Enum.TextXAlignment.Left,
-        TextYAlignment = Enum.TextYAlignment.Center,
-        Parent = parent,
+        BackgroundTransparency = 1, Text = text, Position = pos, Size = size, TextSize = ts or 12,
+        TextColor3 = color or C.White, Font = font or FONT, TextXAlignment = align or Enum.TextXAlignment.Left,
+        TextYAlignment = Enum.TextYAlignment.Center, Parent = parent,
     })
 end
 
 --==============================================================
--- DRAWN ICONS
+-- DRAWN ICONS (Disederhanakan untuk menghemat tempat)
 --==============================================================
-
 local function MakeIcon(name, parent, size, color, pos, anchor)
     color = color or C.White
-
-    local box = New("Frame", {
-        Name = "Icon_" .. name,
-        BackgroundTransparency = 1,
-        Size = UDim2.fromOffset(size, size),
-        Position = pos or UDim2.new(),
-        AnchorPoint = anchor or Vector2.zero,
-        Parent = parent,
-    })
-
+    local box = New("Frame", { Name = "Icon_" .. name, BackgroundTransparency = 1, Size = UDim2.fromOffset(size, size), Position = pos or UDim2.new(), AnchorPoint = anchor or Vector2.zero, Parent = parent })
     local th = math.max(1.6, size * 0.085)
-
     local function Line(x1, y1, x2, y2, t)
         local dx, dy = x2 - x1, y2 - y1
         local thick = t or th
-        local bar = New("Frame", {
-            AnchorPoint = Vector2.new(0.5, 0.5),
-            Position = UDim2.fromScale((x1 + x2) / 2, (y1 + y2) / 2),
-            Size = UDim2.new(math.sqrt(dx * dx + dy * dy), thick, 0, thick),
-            Rotation = math.deg(math.atan2(dy, dx)),
-            BackgroundColor3 = color,
-            BorderSizePixel = 0,
-            Parent = box,
-        })
+        local bar = New("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale((x1 + x2) / 2, (y1 + y2) / 2), Size = UDim2.new(math.sqrt(dx * dx + dy * dy), thick, 0, thick), Rotation = math.deg(math.atan2(dy, dx)), BackgroundColor3 = color, BorderSizePixel = 0, Parent = box })
         New("UICorner", { CornerRadius = UDim.new(0.5, 0), Parent = bar })
     end
-
     local function Circle(cx, cy, d, fill, t)
-        local c = New("Frame", {
-            AnchorPoint = Vector2.new(0.5, 0.5),
-            Position = UDim2.fromScale(cx, cy),
-            Size = UDim2.fromScale(d, d),
-            BackgroundColor3 = color,
-            BackgroundTransparency = fill and 0 or 1,
-            BorderSizePixel = 0,
-            Parent = box,
-        })
+        local c = New("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(cx, cy), Size = UDim2.fromScale(d, d), BackgroundColor3 = color, BackgroundTransparency = fill and 0 or 1, BorderSizePixel = 0, Parent = box })
         New("UICorner", { CornerRadius = UDim.new(0.5, 0), Parent = c })
-        if not fill then
-            New("UIStroke", {
-                Color = color,
-                Thickness = t or th,
-                ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
-                Parent = c,
-            })
-        end
+        if not fill then New("UIStroke", { Color = color, Thickness = t or th, ApplyStrokeMode = Enum.ApplyStrokeMode.Border, Parent = c }) end
     end
-
     local function Rect(x, y, w, h, r, fill, t)
-        local f = New("Frame", {
-            Position = UDim2.fromScale(x, y),
-            Size = UDim2.fromScale(w, h),
-            BackgroundColor3 = color,
-            BackgroundTransparency = fill and 0 or 1,
-            BorderSizePixel = 0,
-            Parent = box,
-        })
+        local f = New("Frame", { Position = UDim2.fromScale(x, y), Size = UDim2.fromScale(w, h), BackgroundColor3 = color, BackgroundTransparency = fill and 0 or 1, BorderSizePixel = 0, Parent = box })
         New("UICorner", { CornerRadius = UDim.new(r or 0, 0), Parent = f })
-        if not fill then
-            New("UIStroke", {
-                Color = color,
-                Thickness = t or th,
-                ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
-                Parent = f,
-            })
-        end
+        if not fill then New("UIStroke", { Color = color, Thickness = t or th, ApplyStrokeMode = Enum.ApplyStrokeMode.Border, Parent = f }) end
     end
-
     local I = {}
-
-    I.home = function()
-        Line(0.5, 0.14, 0.1, 0.48)
-        Line(0.5, 0.14, 0.9, 0.48)
-        Line(0.2, 0.4, 0.2, 0.86)
-        Line(0.8, 0.4, 0.8, 0.86)
-        Line(0.2, 0.86, 0.8, 0.86)
-        Rect(0.43, 0.56, 0.14, 0.3, 0.2, true)
-    end
-
-    I.eye = function()
-        Rect(0.06, 0.26, 0.88, 0.48, 0.5, false)
-        Circle(0.5, 0.5, 0.26, true)
-    end
-
-    I.move = function()
-        Line(0.18, 0.25, 0.48, 0.5)
-        Line(0.48, 0.5, 0.18, 0.75)
-        Line(0.5, 0.25, 0.8, 0.5)
-        Line(0.8, 0.5, 0.5, 0.75)
-    end
-
-    I.cube = function()
-        Line(0.5, 0.08, 0.86, 0.28)
-        Line(0.86, 0.28, 0.86, 0.72)
-        Line(0.86, 0.72, 0.5, 0.92)
-        Line(0.5, 0.92, 0.14, 0.72)
-        Line(0.14, 0.72, 0.14, 0.28)
-        Line(0.14, 0.28, 0.5, 0.08)
-        Line(0.14, 0.28, 0.5, 0.48)
-        Line(0.86, 0.28, 0.5, 0.48)
-        Line(0.5, 0.48, 0.5, 0.92)
-    end
-
-    I.gear = function()
-        Circle(0.5, 0.5, 0.52, false)
-        Circle(0.5, 0.5, 0.16, true)
-        for k = 0, 7 do
-            local a = k * math.pi / 4
-            Line(0.5 + 0.28 * math.cos(a), 0.5 + 0.28 * math.sin(a),
-                0.5 + 0.43 * math.cos(a), 0.5 + 0.43 * math.sin(a), th * 1.5)
-        end
-    end
-
-    I.monitor = function()
-        Rect(0.1, 0.18, 0.8, 0.54, 0.12, false)
-        Line(0.5, 0.74, 0.5, 0.86)
-        Line(0.3, 0.88, 0.7, 0.88)
-    end
-
-    I.info = function()
-        Circle(0.5, 0.5, 0.84, false)
-        Circle(0.5, 0.3, 0.11, true)
-        Line(0.5, 0.46, 0.5, 0.72)
-    end
-
-    I.crown = function()
-        Line(0.14, 0.8, 0.86, 0.8)
-        Line(0.14, 0.8, 0.1, 0.3)
-        Line(0.1, 0.3, 0.34, 0.52)
-        Line(0.34, 0.52, 0.5, 0.2)
-        Line(0.5, 0.2, 0.66, 0.52)
-        Line(0.66, 0.52, 0.9, 0.3)
-        Line(0.9, 0.3, 0.86, 0.8)
-        Rect(0.16, 0.62, 0.68, 0.16, 0.2, true)
-        Circle(0.1, 0.28, 0.14, true)
-        Circle(0.5, 0.17, 0.14, true)
-        Circle(0.9, 0.28, 0.14, true)
-    end
-
-    I.bolt = function()
-        Line(0.6, 0.08, 0.28, 0.55)
-        Line(0.28, 0.55, 0.52, 0.55)
-        Line(0.52, 0.55, 0.4, 0.92)
-        Line(0.4, 0.92, 0.74, 0.42)
-        Line(0.74, 0.42, 0.5, 0.42)
-        Line(0.5, 0.42, 0.6, 0.08)
-    end
-
-    I.plane = function()
-        Line(0.1, 0.45, 0.92, 0.1)
-        Line(0.92, 0.1, 0.5, 0.9)
-        Line(0.5, 0.9, 0.42, 0.58)
-        Line(0.42, 0.58, 0.1, 0.45)
-        Line(0.42, 0.58, 0.92, 0.1)
-    end
-
-    I.pin = function()
-        Circle(0.5, 0.36, 0.5, false)
-        Circle(0.5, 0.36, 0.14, true)
-        Line(0.28, 0.54, 0.5, 0.92)
-        Line(0.72, 0.54, 0.5, 0.92)
-    end
-
-    I.person = function()
-        Circle(0.5, 0.3, 0.32, true)
-        Rect(0.2, 0.54, 0.6, 0.34, 0.45, true)
-    end
-
-    I.gamepad = function()
-        Rect(0.06, 0.26, 0.88, 0.5, 0.45, false)
-        Line(0.27, 0.4, 0.27, 0.62)
-        Line(0.16, 0.51, 0.38, 0.51)
-        Circle(0.66, 0.44, 0.11, true)
-        Circle(0.78, 0.57, 0.11, true)
-    end
-
-    I.check = function()
-        Line(0.2, 0.52, 0.42, 0.74)
-        Line(0.42, 0.74, 0.82, 0.28)
-    end
-
-    I.close = function()
-        Line(0.22, 0.22, 0.78, 0.78)
-        Line(0.78, 0.22, 0.22, 0.78)
-    end
-
-    I.arrow = function()
-        Line(0.14, 0.5, 0.84, 0.5)
-        Line(0.84, 0.5, 0.58, 0.24)
-        Line(0.84, 0.5, 0.58, 0.76)
-    end
-
-    I.chev = function()
-        Line(0.36, 0.2, 0.66, 0.5)
-        Line(0.66, 0.5, 0.36, 0.8)
-    end
-
-    I.pointer = function()
-        Line(0.28, 0.1, 0.28, 0.78)
-        Line(0.28, 0.1, 0.8, 0.58)
-        Line(0.28, 0.78, 0.45, 0.62)
-        Line(0.45, 0.62, 0.8, 0.58)
-    end
-
-    I.key = function()
-        Circle(0.28, 0.5, 0.38, false)
-        Line(0.47, 0.5, 0.92, 0.5)
-        Line(0.74, 0.5, 0.74, 0.7)
-        Line(0.88, 0.5, 0.88, 0.66)
-    end
-
-    I.note = function()
-        Rect(0.2, 0.1, 0.6, 0.8, 0.12, false)
-        Line(0.33, 0.32, 0.67, 0.32)
-        Line(0.33, 0.5, 0.67, 0.5)
-        Line(0.33, 0.68, 0.54, 0.68)
-    end
-
-    I.tape = function()
-        Circle(0.44, 0.5, 0.68, false)
-        Circle(0.44, 0.5, 0.24, false)
-        Line(0.44, 0.84, 0.9, 0.84)
-        Line(0.9, 0.84, 0.9, 0.66)
-    end
-
-    I.drawer = function()
-        Rect(0.12, 0.16, 0.76, 0.68, 0.1, false)
-        Line(0.12, 0.5, 0.88, 0.5)
-        Rect(0.4, 0.28, 0.2, 0.08, 0.5, true)
-        Rect(0.4, 0.64, 0.2, 0.08, 0.5, true)
-    end
-
-    I.shield = function()
-        Line(0.5, 0.08, 0.84, 0.2)
-        Line(0.84, 0.2, 0.84, 0.5)
-        Line(0.84, 0.5, 0.5, 0.92)
-        Line(0.5, 0.92, 0.16, 0.5)
-        Line(0.16, 0.5, 0.16, 0.2)
-        Line(0.16, 0.2, 0.5, 0.08)
-        Line(0.34, 0.48, 0.46, 0.6)
-        Line(0.46, 0.6, 0.68, 0.34)
-    end
-
-    I.warn = function()
-        Line(0.5, 0.2, 0.5, 0.6)
-        Circle(0.5, 0.8, 0.13, true)
-    end
-
-    I.dot = function()
-        Circle(0.5, 0.5, 0.7, true)
-    end
-
-    local builder = I[name]
-    if builder then builder() end
-
+    I.home = function() Line(0.5,0.14,0.1,0.48) Line(0.5,0.14,0.9,0.48) Line(0.2,0.4,0.2,0.86) Line(0.8,0.4,0.8,0.86) Line(0.2,0.86,0.8,0.86) Rect(0.43,0.56,0.14,0.3,0.2,true) end
+    I.eye = function() Rect(0.06,0.26,0.88,0.48,0.5,false) Circle(0.5,0.5,0.26,true) end
+    I.move = function() Line(0.18,0.25,0.48,0.5) Line(0.48,0.5,0.18,0.75) Line(0.5,0.25,0.8,0.5) Line(0.8,0.5,0.5,0.75) end
+    I.cube = function() Line(0.5,0.08,0.86,0.28) Line(0.86,0.28,0.86,0.72) Line(0.86,0.72,0.5,0.92) Line(0.5,0.92,0.14,0.72) Line(0.14,0.72,0.14,0.28) Line(0.14,0.28,0.5,0.08) Line(0.14,0.28,0.5,0.48) Line(0.86,0.28,0.5,0.48) Line(0.5,0.48,0.5,0.92) end
+    I.gear = function() Circle(0.5,0.5,0.52,false) Circle(0.5,0.5,0.16,true) for k=0,7 do local a=k*math.pi/4 Line(0.5+0.28*math.cos(a),0.5+0.28*math.sin(a),0.5+0.43*math.cos(a),0.5+0.43*math.sin(a),th*1.5) end end
+    I.monitor = function() Rect(0.1,0.18,0.8,0.54,0.12,false) Line(0.5,0.74,0.5,0.86) Line(0.3,0.88,0.7,0.88) end
+    I.info = function() Circle(0.5,0.5,0.84,false) Circle(0.5,0.3,0.11,true) Line(0.5,0.46,0.5,0.72) end
+    I.crown = function() Line(0.14,0.8,0.86,0.8) Line(0.14,0.8,0.1,0.3) Line(0.1,0.3,0.34,0.52) Line(0.34,0.52,0.5,0.2) Line(0.5,0.2,0.66,0.52) Line(0.66,0.52,0.9,0.3) Line(0.9,0.3,0.86,0.8) Rect(0.16,0.62,0.68,0.16,0.2,true) Circle(0.1,0.28,0.14,true) Circle(0.5,0.17,0.14,true) Circle(0.9,0.28,0.14,true) end
+    I.bolt = function() Line(0.6,0.08,0.28,0.55) Line(0.28,0.55,0.52,0.55) Line(0.52,0.55,0.4,0.92) Line(0.4,0.92,0.74,0.42) Line(0.74,0.42,0.5,0.42) Line(0.5,0.42,0.6,0.08) end
+    I.plane = function() Line(0.1,0.45,0.92,0.1) Line(0.92,0.1,0.5,0.9) Line(0.5,0.9,0.42,0.58) Line(0.42,0.58,0.1,0.45) Line(0.42,0.58,0.92,0.1) end
+    I.pin = function() Circle(0.5,0.36,0.5,false) Circle(0.5,0.36,0.14,true) Line(0.28,0.54,0.5,0.92) Line(0.72,0.54,0.5,0.92) end
+    I.person = function() Circle(0.5,0.3,0.32,true) Rect(0.2,0.54,0.6,0.34,0.45,true) end
+    I.gamepad = function() Rect(0.06,0.26,0.88,0.5,0.45,false) Line(0.27,0.4,0.27,0.62) Line(0.16,0.51,0.38,0.51) Circle(0.66,0.44,0.11,true) Circle(0.78,0.57,0.11,true) end
+    I.check = function() Line(0.2,0.52,0.42,0.74) Line(0.42,0.74,0.82,0.28) end
+    I.close = function() Line(0.22,0.22,0.78,0.78) Line(0.78,0.22,0.22,0.78) end
+    I.arrow = function() Line(0.14,0.5,0.84,0.5) Line(0.84,0.5,0.58,0.24) Line(0.84,0.5,0.58,0.76) end
+    I.chev = function() Line(0.36,0.2,0.66,0.5) Line(0.66,0.5,0.36,0.8) end
+    I.pointer = function() Line(0.28,0.1,0.28,0.78) Line(0.28,0.1,0.8,0.58) Line(0.28,0.78,0.45,0.62) Line(0.45,0.62,0.8,0.58) end
+    I.key = function() Circle(0.28,0.5,0.38,false) Line(0.47,0.5,0.92,0.5) Line(0.74,0.5,0.74,0.7) Line(0.88,0.5,0.88,0.66) end
+    I.note = function() Rect(0.2,0.1,0.6,0.8,0.12,false) Line(0.33,0.32,0.67,0.32) Line(0.33,0.5,0.67,0.5) Line(0.33,0.68,0.54,0.68) end
+    I.tape = function() Circle(0.44,0.5,0.68,false) Circle(0.44,0.5,0.24,false) Line(0.44,0.84,0.9,0.84) Line(0.9,0.84,0.9,0.66) end
+    I.drawer = function() Rect(0.12,0.16,0.76,0.68,0.1,false) Line(0.12,0.5,0.88,0.5) Rect(0.4,0.28,0.2,0.08,0.5,true) Rect(0.4,0.64,0.2,0.08,0.5,true) end
+    I.shield = function() Line(0.5,0.08,0.84,0.2) Line(0.84,0.2,0.84,0.5) Line(0.84,0.5,0.5,0.92) Line(0.5,0.92,0.16,0.5) Line(0.16,0.5,0.16,0.2) Line(0.16,0.2,0.5,0.08) Line(0.34,0.48,0.46,0.6) Line(0.46,0.6,0.68,0.34) end
+    I.warn = function() Line(0.5,0.2,0.5,0.6) Circle(0.5,0.8,0.13,true) end
+    I.dot = function() Circle(0.5,0.5,0.7,true) end
+    local builder = I[name] if builder then builder() end
     return box
 end
 
 local function SetIconColor(box, color)
     for _, d in ipairs(box:GetDescendants()) do
-        if d:IsA("UIStroke") then
-            d.Color = color
-        elseif d:IsA("Frame") and d.BackgroundTransparency < 1 then
-            d.BackgroundColor3 = color
-        end
+        if d:IsA("UIStroke") then d.Color = color
+        elseif d:IsA("Frame") and d.BackgroundTransparency < 1 then d.BackgroundColor3 = color end
     end
 end
 
@@ -667,289 +317,122 @@ local function HubMark(parent, y, ts)
     local off = ts * 3.2
     local cy = y + (ts + 6) / 2
     for _, side in ipairs({ -1, 1 }) do
-        local l = New("Frame", {
-            AnchorPoint = Vector2.new(side == -1 and 1 or 0, 0.5),
-            Position = UDim2.new(0.5, side * off, 0, cy),
-            Size = UDim2.fromOffset(ts * 1.4, 2),
-            BackgroundColor3 = C.White,
-            BorderSizePixel = 0,
-            Parent = parent,
-        })
+        local l = New("Frame", { AnchorPoint = Vector2.new(side == -1 and 1 or 0, 0.5), Position = UDim2.new(0.5, side * off, 0, cy), Size = UDim2.fromOffset(ts * 1.4, 2), BackgroundColor3 = C.White, BorderSizePixel = 0, Parent = parent })
         Round(l, 1)
     end
 end
 
-local function AddScale(frame)
-    local s = New("UIScale", { Scale = 1, Parent = frame })
-    table.insert(Scales, s)
-    return s
-end
-
+local function AddScale(frame) local s = New("UIScale", { Scale = 1, Parent = frame }) table.insert(Scales, s) return s end
 local function ApplyScale()
     local cam = Workspace.CurrentCamera
     if not cam then return end
     local v = cam.ViewportSize
     local sc = math.clamp(math.min(v.X / 980, v.Y / 640, 1), 0.5, 1)
-    for _, s in ipairs(Scales) do
-        if s.Parent then s.Scale = sc end
-    end
+    for _, s in ipairs(Scales) do if s.Parent then s.Scale = sc end end
 end
 
 local function MakeDraggable(handle, target, scaleObj)
-    local dragging = false
-    local startInput, startPosition
-
+    local dragging, startInput, startPosition = false, nil, nil
     handle.InputBegan:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1
-            or input.UserInputType == Enum.UserInputType.Touch then
-            dragging = true
-            startInput = input.Position
-            startPosition = target.Position
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            dragging = true startInput = input.Position startPosition = target.Position
         end
     end)
-
     Track(UIS.InputChanged:Connect(function(input)
-        if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement
-            or input.UserInputType == Enum.UserInputType.Touch) then
+        if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
             local sc = scaleObj and scaleObj.Scale or 1
             local dx = (input.Position.X - startInput.X) / sc
             local dy = (input.Position.Y - startInput.Y) / sc
-            target.Position = UDim2.new(
-                startPosition.X.Scale, startPosition.X.Offset + dx,
-                startPosition.Y.Scale, startPosition.Y.Offset + dy
-            )
+            target.Position = UDim2.new(startPosition.X.Scale, startPosition.X.Offset + dx, startPosition.Y.Scale, startPosition.Y.Offset + dy)
         end
     end))
-
     Track(UIS.InputEnded:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1
-            or input.UserInputType == Enum.UserInputType.Touch then
-            dragging = false
-        end
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then dragging = false end
     end))
 end
 
 local function Btn(parent, text, size, pos, cb, primary)
-    local b = New("TextButton", {
-        Size = size,
-        Position = pos,
-        BackgroundColor3 = primary and C.White or C.Card,
-        Text = text,
-        TextColor3 = primary and C.Bg or C.White,
-        Font = BOLD,
-        TextSize = 12,
-        AutoButtonColor = false,
-        Parent = parent,
-    })
-    Round(b, 10)
-    Stroke(b, C.Stroke, 1, 0.4)
-    b.MouseEnter:Connect(function()
-        Tween(b, 0.12, { BackgroundColor3 = primary and C.Gray or C.Card2 })
-    end)
-    b.MouseLeave:Connect(function()
-        Tween(b, 0.12, { BackgroundColor3 = primary and C.White or C.Card })
-    end)
-    b.MouseButton1Click:Connect(function()
-        if cb then cb() end
-    end)
+    local b = New("TextButton", { Size = size, Position = pos, BackgroundColor3 = primary and C.White or C.Card, Text = text, TextColor3 = primary and C.Bg or C.White, Font = BOLD, TextSize = 12, AutoButtonColor = false, Parent = parent })
+    Round(b, 10) Stroke(b, C.Stroke, 1, 0.4)
+    b.MouseEnter:Connect(function() Tween(b, 0.12, { BackgroundColor3 = primary and C.Gray or C.Card2 }) end)
+    b.MouseLeave:Connect(function() Tween(b, 0.12, { BackgroundColor3 = primary and C.White or C.Card }) end)
+    b.MouseButton1Click:Connect(function() if cb then cb() end end)
     return b
 end
 
 --==============================================================
--- TOASTS
+-- TOASTS & CHARACTER HELPERS
 --==============================================================
-
 local function Notify(title, message, kind)
     if not MainGui or not MainGui.Parent then return end
-    local isErr = kind == "err"
-    local col = isErr and C.Red or C.Green
-
-    local t = New("Frame", {
-        AnchorPoint = Vector2.new(1, 1),
-        Size = UDim2.fromOffset(262, 58),
-        Position = UDim2.new(1, 290, 1, -120),
-        BackgroundColor3 = C.Panel,
-        ZIndex = 200,
-        Parent = MainGui,
-    })
-    Round(t, 12)
-    Stroke(t, C.Stroke, 1)
-
-    local ic = New("Frame", {
-        Size = UDim2.fromOffset(26, 26),
-        Position = UDim2.fromOffset(12, 16),
-        BackgroundColor3 = col,
-        Parent = t,
-    })
-    Round(ic, 13)
-    MakeIcon(isErr and "warn" or "check", ic, 14, C.White, CENTER_POS, CENTER)
-
+    local isErr = kind == "err" local col = isErr and C.Red or C.Green
+    local t = New("Frame", { AnchorPoint = Vector2.new(1, 1), Size = UDim2.fromOffset(262, 58), Position = UDim2.new(1, 290, 1, -120), BackgroundColor3 = C.Panel, ZIndex = 200, Parent = MainGui })
+    Round(t, 12) Stroke(t, C.Stroke, 1)
+    local ic = New("Frame", { Size = UDim2.fromOffset(26, 26), Position = UDim2.fromOffset(12, 16), BackgroundColor3 = col, Parent = t })
+    Round(ic, 13) MakeIcon(isErr and "warn" or "check", ic, 14, C.White, CENTER_POS, CENTER)
     Text(t, title, UDim2.fromOffset(48, 9), UDim2.new(1, -80, 0, 20), 13, C.White, BOLD)
     Text(t, message, UDim2.fromOffset(48, 29), UDim2.new(1, -80, 0, 18), 10, C.Gray)
     MakeIcon("close", t, 10, C.Gray, UDim2.new(1, -22, 0, 10))
-
     Tween(t, 0.3, { Position = UDim2.new(1, -14, 1, -120) })
-
     task.delay(2.8, function()
-        if t.Parent then
-            Tween(t, 0.25, { Position = UDim2.new(1, 290, 1, -120) })
-            task.wait(0.3)
-            if t.Parent then t:Destroy() end
-        end
+        if t.Parent then Tween(t, 0.25, { Position = UDim2.new(1, 290, 1, -120) }) task.wait(0.3) if t.Parent then t:Destroy() end end
     end)
 end
 
 local function TopToast(title, message)
     if not MainGui or not MainGui.Parent then return end
-
-    local t = New("Frame", {
-        AnchorPoint = Vector2.new(0.5, 0),
-        Size = UDim2.fromOffset(340, 66),
-        Position = UDim2.new(0.5, 0, 0, -90),
-        BackgroundColor3 = C.Panel,
-        ZIndex = 200,
-        Parent = MainGui,
-    })
-    Round(t, 16)
-    Stroke(t, C.Stroke, 1.3)
-
-    local ic = New("Frame", {
-        Size = UDim2.fromOffset(40, 40),
-        Position = UDim2.fromOffset(14, 13),
-        BackgroundColor3 = C.Gray,
-        Parent = t,
-    })
-    Round(ic, 20)
-    MakeIcon("check", ic, 22, C.White, CENTER_POS, CENTER)
-
+    local t = New("Frame", { AnchorPoint = Vector2.new(0.5, 0), Size = UDim2.fromOffset(340, 66), Position = UDim2.new(0.5, 0, 0, -90), BackgroundColor3 = C.Panel, ZIndex = 200, Parent = MainGui })
+    Round(t, 16) Stroke(t, C.Stroke, 1.3)
+    local ic = New("Frame", { Size = UDim2.fromOffset(40, 40), Position = UDim2.fromOffset(14, 13), BackgroundColor3 = C.Gray, Parent = t })
+    Round(ic, 20) MakeIcon("check", ic, 22, C.White, CENTER_POS, CENTER)
     Text(t, title, UDim2.fromOffset(70, 10), UDim2.new(1, -80, 0, 24), 16, C.White, BOLD)
     Text(t, message, UDim2.fromOffset(70, 33), UDim2.new(1, -80, 0, 22), 14, C.White)
-
     Tween(t, 0.4, { Position = UDim2.new(0.5, 0, 0, 18) })
-
     task.delay(3.5, function()
-        if t.Parent then
-            Tween(t, 0.3, { Position = UDim2.new(0.5, 0, 0, -90) })
-            task.wait(0.35)
-            if t.Parent then t:Destroy() end
-        end
+        if t.Parent then Tween(t, 0.3, { Position = UDim2.new(0.5, 0, 0, -90) }) task.wait(0.35) if t.Parent then t:Destroy() end end
     end)
 end
 
---==============================================================
--- CHARACTER HELPERS
---==============================================================
-
 local function Character() return Player.Character end
-
-local function Root()
-    local c = Character()
-    return c and c:FindFirstChild("HumanoidRootPart")
-end
-
-local function Humanoid()
-    local c = Character()
-    return c and c:FindFirstChildOfClass("Humanoid")
-end
+local function Root() local c = Character() return c and c:FindFirstChild("HumanoidRootPart") end
+local function Humanoid() local c = Character() return c and c:FindFirstChildOfClass("Humanoid") end
 
 --==============================================================
 -- LOADING SCREEN
 --==============================================================
-
-LoadingGui = New("ScreenGui", {
-    Name = "YvoneLoading",
-    ResetOnSpawn = false,
-    IgnoreGuiInset = true,
-    DisplayOrder = 300,
-    Parent = PlayerGui,
-})
-
-local LoadBg = New("Frame", {
-    Size = UDim2.fromScale(1, 1),
-    BackgroundColor3 = C.Bg,
-    Parent = LoadingGui,
-})
-
-local LoadCard = New("Frame", {
-    AnchorPoint = Vector2.new(0.5, 0.5),
-    Position = UDim2.fromScale(0.5, 0.5),
-    Size = UDim2.fromOffset(400, 260),
-    BackgroundColor3 = C.White,
-    Parent = LoadBg,
-})
-Round(LoadCard, 20)
-Stroke(LoadCard, C.Stroke, 1.4)
-Grad(LoadCard, Color3.fromRGB(24, 25, 30), Color3.fromRGB(10, 11, 14), 120)
-
+LoadingGui = New("ScreenGui", { Name = "YvoneLoading", ResetOnSpawn = false, IgnoreGuiInset = true, DisplayOrder = 300, Parent = PlayerGui })
+local LoadBg = New("Frame", { Size = UDim2.fromScale(1, 1), BackgroundColor3 = C.Bg, Parent = LoadingGui })
+local LoadCard = New("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromOffset(400, 260), BackgroundColor3 = C.White, Parent = LoadBg })
+Round(LoadCard, 20) Stroke(LoadCard, C.Stroke, 1.4) Grad(LoadCard, Color3.fromRGB(24, 25, 30), Color3.fromRGB(10, 11, 14), 120)
 local LogoY = Text(LoadCard, "YVONE", UDim2.fromOffset(0, 26), UDim2.new(1, 0, 0, 60), 44, C.White, BLACK, Enum.TextXAlignment.Center)
-Grad(LogoY, C.White, Color3.fromRGB(125, 128, 138), 90)
-HubMark(LoadCard, 84, 13)
-
+Grad(LogoY, C.White, Color3.fromRGB(125, 128, 138), 90) HubMark(LoadCard, 84, 13)
 local LoadStatus = Text(LoadCard, "Initializing interface...", UDim2.fromOffset(25, 128), UDim2.new(1, -50, 0, 20), 11, C.Gray)
-
-local LoadBar = New("Frame", {
-    Size = UDim2.new(1, -50, 0, 6),
-    Position = UDim2.fromOffset(25, 160),
-    BackgroundColor3 = C.Stroke,
-    Parent = LoadCard,
-})
-Round(LoadBar, 3)
-
-local LoadFill = New("Frame", {
-    Size = UDim2.new(0, 0, 1, 0),
-    BackgroundColor3 = C.White,
-    Parent = LoadBar,
-})
-Round(LoadFill, 3)
-
-local LoadingReady = false
-local OnLoadingDone
-
+local LoadBar = New("Frame", { Size = UDim2.new(1, -50, 0, 6), Position = UDim2.fromOffset(25, 160), BackgroundColor3 = C.Stroke, Parent = LoadCard })
+Round(LoadBar, 3) local LoadFill = New("Frame", { Size = UDim2.new(0, 0, 1, 0), BackgroundColor3 = C.White, Parent = LoadBar })
+Round(LoadFill, 3) local LoadingReady, OnLoadingDone = false, nil
 local LoadScale = New("UIScale", { Parent = LoadCard })
-local function FitLoadScale()
-    local cam = Workspace.CurrentCamera
-    local vs = cam and cam.ViewportSize or Vector2.new(1280, 720)
-    LoadScale.Scale = math.clamp(math.min(vs.X / 500, vs.Y / 400, 1), 0.55, 1)
-end
+local function FitLoadScale() local cam = Workspace.CurrentCamera local vs = cam and cam.ViewportSize or Vector2.new(1280, 720) LoadScale.Scale = math.clamp(math.min(vs.X / 500, vs.Y / 400, 1), 0.55, 1) end
 FitLoadScale()
 
 task.spawn(function()
-    local steps = {
-        "Initializing interface...",
-        "Preparing dashboard...",
-        "Loading visual components...",
-        "Preparing mobile controls...",
-        "Finalizing configuration...",
-    }
+    local steps = { "Initializing interface...", "Preparing dashboard...", "Loading visual components...", "Preparing mobile controls...", "Finalizing configuration..." }
     for i, s in ipairs(steps) do
         if not LoadingGui.Parent then return end
-        LoadStatus.Text = s
-        Tween(LoadFill, 0.35, { Size = UDim2.new(i / #steps, 0, 1, 0) })
-        task.wait(0.4)
+        LoadStatus.Text = s Tween(LoadFill, 0.35, { Size = UDim2.new(i / #steps, 0, 1, 0) }) task.wait(0.4)
     end
-    LoadStatus.Text = "All systems ready."
-    task.wait(0.3)
-    LoadingReady = true
-    if OnLoadingDone then OnLoadingDone() end
+    LoadStatus.Text = "All systems ready." task.wait(0.3) LoadingReady = true if OnLoadingDone then OnLoadingDone() end
 end)
 
 --==============================================================
--- ESP ENGINE
+-- ESP ENGINE & MOB DETECTION
 --==============================================================
-
 local function GetCategory(name)
     local n = string.lower(name)
-
     if IsCekguMap then
-        if string.find(n, "loker") or string.find(n, "guru") or string.find(n, "drawer") then
-            return "CEKGU_ITEM", Color3.fromRGB(255, 215, 0)
-        end
-        if string.find(n, "key") or string.find(n, "gembok") then
-            return "CEKGU_KEY", Color3.fromRGB(50, 255, 50)
-        end
+        if string.find(n, "loker") or string.find(n, "guru") or string.find(n, "drawer") then return "DRAWER / LOKER", Color3.fromRGB(255, 215, 0) end
+        if string.find(n, "key") or string.find(n, "gembok") then return "KEY / GEMBOK", Color3.fromRGB(50, 255, 50) end
         return nil
     end
-
     if IsAtok then
         if string.find(n, "blue") and string.find(n, "key") then return "BLUE KEY", Color3.fromRGB(50, 150, 255)
         elseif string.find(n, "red") and string.find(n, "key") then return "RED KEY", Color3.fromRGB(255, 50, 50)
@@ -958,16 +441,12 @@ local function GetCategory(name)
         elseif string.find(n, "crowbar", 1, true) then return "CROWBAR", Color3.fromRGB(255, 100, 255)
         elseif string.find(n, "keynote", 1, true) then return "KEYNOTE", Color3.fromRGB(255, 180, 100)
         elseif string.find(n, "note", 1, true) then return "NOTE", Color3.fromRGB(255, 255, 100)
+        elseif string.find(n, "tape", 1, true) or string.find(n, "pita", 1, true) then return "TAPE", Color3.fromRGB(200, 100, 50)
         end
         return nil
     end
-
-    if string.find(n, "safezone") or string.find(n, "keypad") or string.find(n, "chair") then
-        return nil
-    end
-    if string.find(n, "opah") then
-        return "OPAH", C.Red
-    end
+    if string.find(n, "safezone") or string.find(n, "keypad") or string.find(n, "chair") then return nil end
+    if string.find(n, "opah") then return "OPAH", C.Red end
     if string.find(n, "key") then
         if string.find(n, "red") then return "RED KEY", C.Red
         elseif string.find(n, "blue") then return "BLUE KEY", Color3.fromRGB(105, 165, 235)
@@ -975,65 +454,8 @@ local function GetCategory(name)
         elseif string.find(n, "yellow") then return "YELLOW KEY", C.Yellow end
         return "KEY", C.White
     end
-    if string.find(n, "note") or string.find(n, "passcode") then
-        return "PASSCODE NOTE", C.Yellow
-    end
+    if string.find(n, "note") or string.find(n, "passcode") then return "PASSCODE NOTE", C.Yellow end
     return nil
-end
-
-local function IsDrawerName(inst)
-    return (inst:IsA("Model") or inst:IsA("BasePart"))
-        and string.find(string.lower(inst.Name), "drawer", 1, true) ~= nil
-end
-
-local function IsDrawerModel(inst)
-    return inst:IsA("Model") and string.find(string.lower(inst.Name), "drawer", 1, true) ~= nil
-end
-
-local function HasDrawerModelDescendant(model)
-    for _, d in ipairs(model:GetDescendants()) do
-        if IsDrawerModel(d) then return true end
-    end
-    return false
-end
-
-local function DrawerModelAncestor(inst)
-    local n = inst.Parent
-    while n and n ~= Workspace do
-        if IsDrawerModel(n) then return n end
-        n = n.Parent
-    end
-    return nil
-end
-
-local function IsDrawerTarget(inst)
-    if not IsDrawerName(inst) then return false end
-    if inst:IsA("Model") then
-        return not HasDrawerModelDescendant(inst)
-    end
-    local m = DrawerModelAncestor(inst)
-    if m and not HasDrawerModelDescendant(m) then return false end
-    return true
-end
-
-local function IsTapeName(inst)
-    if not (inst:IsA("Model") or inst:IsA("BasePart") or inst:IsA("Tool")) then
-        return false
-    end
-    local spaced = string.gsub(inst.Name, "(%l)(%u)", "%1 %2")
-    for word in string.gmatch(string.lower(spaced), "%a+") do
-        if word == "pita" or word == "tape" or word == "pitas" or word == "tapes" then
-            return true
-        end
-    end
-    return false
-end
-
-local function HasTapeDescendant(inst)
-    for _, d in ipairs(inst:GetDescendants()) do
-        if IsTapeName(d) then return true end
-    end
-    return false
 end
 
 local function GetPart(inst)
@@ -1048,112 +470,91 @@ local function GetPart(inst)
     return nil
 end
 
-local function Classify(inst)
-    if IsCekguMap then
-        return GetCategory(inst.Name)
-    end
-    if IsAtok then
-        if IsDrawerTarget(inst) then
-            return "DRAWER", C.Yellow
-        end
-        return GetCategory(inst.Name)
-    end
-    return GetCategory(inst.Name)
-end
-
-local function CategoryEnabled(cat)
-    if cat == "DRAWER" then return State.ESP_Drawer end
-    if cat == "OPAH" then return State.ESP_Opah end
-    if cat == "CEKGU_ITEM" or cat == "CEKGU_KEY" then return State.ESP_CekguItem end
-    
-    if cat == "BLUE KEY" or cat == "RED KEY" or cat == "GREEN KEY" 
-       or cat == "YELLOW KEY" or cat == "CROWBAR" or cat == "KEYNOTE" or cat == "NOTE" then
-        return State.ESP_AtokItem
-    end
-    
-    return State.ESP_Item
-end
-
 local function RemoveESP(inst)
     local data = ESPObjects[inst]
     if not data then return end
-    for _, o in pairs(data) do
-        if typeof(o) == "Instance" then
-            pcall(function() o:Destroy() end)
-        end
-    end
+    for _, o in pairs(data) do if typeof(o) == "Instance" then pcall(function() o:Destroy() end) end end
     ESPObjects[inst] = nil
 end
 
-local function ClearESP()
-    for inst in pairs(ESPObjects) do RemoveESP(inst) end
-end
+local function ClearESP() for inst in pairs(ESPObjects) do RemoveESP(inst) end end
 
-local function CreateESP(inst)
+local function CreateESP(inst, category, color)
     if not inst or not inst.Parent or ESPObjects[inst] then return end
-
-    local category, color = Classify(inst)
-    if not category or not CategoryEnabled(category) then return end
-
-    local display = category
     local part = GetPart(inst)
     if not part then return end
 
     local hl = Instance.new("Highlight")
-    hl.Name = "YvoneHighlight"
-    hl.Adornee = inst
-    hl.FillColor = color
-    hl.OutlineColor = color
-    hl.FillTransparency = 0.8
-    hl.OutlineTransparency = 0.15
-    hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
-    hl.Parent = Workspace
+    hl.Name = "YvoneHighlight" hl.Adornee = inst hl.FillColor = color hl.OutlineColor = color
+    hl.FillTransparency = 0.8 hl.OutlineTransparency = 0.15 hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop hl.Parent = Workspace
 
     local bb = Instance.new("BillboardGui")
-    bb.Name = "YvoneLabel"
-    bb.Adornee = part
-    bb.Size = UDim2.fromOffset(170, 30)
-    bb.StudsOffset = Vector3.new(0, 2.5, 0)
-    bb.AlwaysOnTop = true
-    bb.MaxDistance = MAX_DISTANCE
-    bb.Parent = PlayerGui
+    bb.Name = "YvoneLabel" bb.Adornee = part bb.Size = UDim2.fromOffset(200, 30) bb.StudsOffset = Vector3.new(0, 2.5, 0)
+    bb.AlwaysOnTop = true bb.MaxDistance = MAX_DISTANCE bb.Parent = PlayerGui
 
-    local label = New("TextLabel", {
-        Size = UDim2.fromScale(1, 1),
-        BackgroundTransparency = 1,
-        TextColor3 = color,
-        TextStrokeTransparency = 0.2,
-        TextStrokeColor3 = Color3.new(0, 0, 0),
-        Font = BOLD,
-        TextSize = 12,
-        Parent = bb,
-    })
+    local label = New("TextLabel", { Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, TextColor3 = color, TextStrokeTransparency = 0.2, TextStrokeColor3 = Color3.new(0, 0, 0), Font = BOLD, TextSize = 12, Parent = bb })
 
     local box = Instance.new("BoxHandleAdornment")
-    box.Name = "YvoneBox"
-    box.Adornee = part
-    box.Size = part.Size
-    box.AlwaysOnTop = true
-    box.Color3 = color
-    box.Transparency = 0.8
-    box.ZIndex = 5
-    box.Parent = Workspace
+    box.Name = "YvoneBox" box.Adornee = part box.Size = part.Size box.AlwaysOnTop = true box.Color3 = color box.Transparency = 0.8 box.ZIndex = 5 box.Parent = Workspace
 
-    ESPObjects[inst] = {
-        Highlight = hl,
-        Billboard = bb,
-        Label = label,
-        Box = box,
-        Category = category,
-        Display = display,
-        Part = part,
-    }
+    ESPObjects[inst] = { Highlight = hl, Billboard = bb, Label = label, Box = box, Category = category, Part = part }
 end
 
-local function ApplyESPFlags()
-    for inst, data in pairs(ESPObjects) do
-        if not CategoryEnabled(data.Category) then
-            RemoveESP(inst)
+-- ESP MOB DINAMIS (Semua Map)
+local function UpdateGlobalMobESP()
+    if not State.ESP_Mob then return end
+    local root = Root()
+    if not root then return end
+    local char = Character()
+
+    for _, inst in ipairs(Workspace:GetDescendants()) do
+        if inst:IsA("Model") and inst ~= char then
+            local hum = inst:FindFirstChildOfClass("Humanoid")
+            if hum and hum.Health > 0 then
+                local part = GetPart(inst)
+                if part then
+                    local dist = (root.Position - part.Position).Magnitude
+                    if dist <= MAX_DISTANCE then
+                        local speed = part.AssemblyLinearVelocity.Magnitude
+                        local status = "Diam"
+                        local color = Color3.fromRGB(200, 200, 200)
+                        
+                        if speed > 19 then
+                            status = "Lari" color = Color3.fromRGB(255, 50, 50)
+                        elseif speed > 1 then
+                            status = "Jalan" color = Color3.fromRGB(50, 255, 50)
+                        end
+
+                        local displayName = string.format("%s [%s]", inst.Name, status)
+
+                        if not ESPObjects[inst] then
+                            local hl = Instance.new("Highlight")
+                            hl.Name = "MobHighlight" hl.Adornee = inst hl.FillColor = color hl.OutlineColor = color
+                            hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop hl.Parent = Workspace
+
+                            local bb = Instance.new("BillboardGui")
+                            bb.Name = "MobLabel" bb.Adornee = part bb.Size = UDim2.fromOffset(170, 30) bb.StudsOffset = Vector3.new(0, 3, 0)
+                            bb.AlwaysOnTop = true bb.Parent = PlayerGui
+
+                            local label = New("TextLabel", { Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, Text = displayName, TextColor3 = color, TextStrokeTransparency = 0.2, TextStrokeColor3 = Color3.new(0, 0, 0), Font = BOLD, TextSize = 12, Parent = bb })
+                            
+                            ESPObjects[inst] = { Highlight = hl, Billboard = bb, Label = label, Category = "MOB", Part = part }
+                        else
+                            local data = ESPObjects[inst]
+                            if data.Category == "MOB" then
+                                data.Highlight.FillColor = color
+                                data.Highlight.OutlineColor = color
+                                data.Label.TextColor3 = color
+                                data.Label.Text = displayName
+                            end
+                        end
+                    else
+                        if ESPObjects[inst] and ESPObjects[inst].Category == "MOB" then RemoveESP(inst) end
+                    end
+                end
+            else
+                if ESPObjects[inst] and ESPObjects[inst].Category == "MOB" then RemoveESP(inst) end
+            end
         end
     end
 end
@@ -1165,14 +566,9 @@ local function IsInsideDrawer(inst)
             if string.find(string.lower(n.Name), "drawer", 1, true) then
                 local hasPrompt = false
                 for _, d in ipairs(n:GetDescendants()) do
-                    if d:IsA("ProximityPrompt") then
-                        hasPrompt = true
-                        break
-                    end
+                    if d:IsA("ProximityPrompt") then hasPrompt = true break end
                 end
-                if not hasPrompt then
-                    return true
-                end
+                if not hasPrompt then return true end
             end
         end
         n = n.Parent
@@ -1181,189 +577,25 @@ local function IsInsideDrawer(inst)
 end
 
 local function ScanESP()
-    if not (State.ESP_Opah or State.ESP_Item or State.ESP_Drawer or State.ESP_CekguItem or State.ESP_AtokItem) then return end
+    if not (State.ESP_Item) then return end
     local root = Root()
     if not root then return end
     local char = Character()
 
     for _, inst in ipairs(Workspace:GetDescendants()) do
         if not ESPObjects[inst] and not (char and inst:IsDescendantOf(char)) then
-            local cat = Classify(inst)
-            if cat and CategoryEnabled(cat) and not IsInsideDrawer(inst) then
+            local cat, color = GetCategory(inst.Name)
+            if cat and not IsInsideDrawer(inst) then
                 local part = GetPart(inst)
                 if part and (root.Position - part.Position).Magnitude <= MAX_DISTANCE then
-                    CreateESP(inst)
+                    CreateESP(inst, cat, color)
                 end
             end
         end
     end
 end
 
-local function RefreshESP()
-    ClearESP()
-    ScanESP()
-end
-
---==============================================================
--- CEKGU & ATOK MOB ESP (Diam, Jalan, Lari)
---==============================================================
-local function UpdateCekguMobESP()
-    if not IsCekguMap or not State.ESP_CekguMob then return end
-    local root = Root()
-    if not root then return end
-    local char = Character()
-
-    for _, inst in ipairs(Workspace:GetDescendants()) do
-        if inst:IsA("Model") and inst ~= char then
-            local hum = inst:FindFirstChildOfClass("Humanoid")
-            if hum and hum.Health > 0 then
-                local part = GetPart(inst)
-                if part then
-                    local dist = (root.Position - part.Position).Magnitude
-                    if dist <= MAX_DISTANCE then
-                        local speed = part.AssemblyLinearVelocity.Magnitude
-                        local status = "DIAM"
-                        local color = Color3.fromRGB(200, 200, 200)
-                        
-                        if speed > 19 then
-                            status = "LARI"
-                            color = Color3.fromRGB(255, 50, 50)
-                        elseif speed > 1 then
-                            status = "JALAN"
-                            color = Color3.fromRGB(50, 255, 50)
-                        end
-
-                        if not ESPObjects[inst] then
-                            local hl = Instance.new("Highlight")
-                            hl.Name = "MobHighlight"
-                            hl.Adornee = inst
-                            hl.FillColor = color
-                            hl.OutlineColor = color
-                            hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
-                            hl.Parent = Workspace
-
-                            local bb = Instance.new("BillboardGui")
-                            bb.Name = "MobLabel"
-                            bb.Adornee = part
-                            bb.Size = UDim2.fromOffset(170, 30)
-                            bb.StudsOffset = Vector3.new(0, 3, 0)
-                            bb.AlwaysOnTop = true
-                            bb.Parent = PlayerGui
-
-                            local label = New("TextLabel", {
-                                Size = UDim2.fromScale(1, 1),
-                                BackgroundTransparency = 1,
-                                TextColor3 = color,
-                                TextStrokeTransparency = 0.2,
-                                TextStrokeColor3 = Color3.new(0, 0, 0),
-                                Font = BOLD,
-                                TextSize = 12,
-                                Parent = bb,
-                            })
-                            
-                            ESPObjects[inst] = { Highlight = hl, Billboard = bb, Label = label, Category = "CEKGU_MOB", Part = part }
-                        else
-                            local data = ESPObjects[inst]
-                            if data.Category == "CEKGU_MOB" then
-                                data.Highlight.FillColor = color
-                                data.Highlight.OutlineColor = color
-                                data.Label.TextColor3 = color
-                                data.Label.Text = string.format("%s (%s)", inst.Name, status)
-                            end
-                        end
-                    else
-                        if ESPObjects[inst] and ESPObjects[inst].Category == "CEKGU_MOB" then
-                            RemoveESP(inst)
-                        end
-                    end
-                end
-            else
-                if ESPObjects[inst] and ESPObjects[inst].Category == "CEKGU_MOB" then
-                    RemoveESP(inst)
-                end
-            end
-        end
-    end
-end
-
-local function UpdateAtokMobESP()
-    if not IsAtok or not State.ESP_AtokMob then return end
-    local root = Root()
-    if not root then return end
-    local char = Character()
-
-    for _, inst in ipairs(Workspace:GetDescendants()) do
-        if inst:IsA("Model") and inst ~= char then
-            local hum = inst:FindFirstChildOfClass("Humanoid")
-            if hum and hum.Health > 0 then
-                local part = GetPart(inst)
-                if part then
-                    local dist = (root.Position - part.Position).Magnitude
-                    if dist <= MAX_DISTANCE then
-                        local speed = part.AssemblyLinearVelocity.Magnitude
-                        local status = "DIAM"
-                        local color = Color3.fromRGB(200, 200, 200)
-                        
-                        if speed > 19 then
-                            status = "LARI"
-                            color = Color3.fromRGB(255, 50, 50)
-                        elseif speed > 1 then
-                            status = "JALAN"
-                            color = Color3.fromRGB(50, 255, 50)
-                        end
-
-                        if not ESPObjects[inst] then
-                            local hl = Instance.new("Highlight")
-                            hl.Name = "AtokMobHighlight"
-                            hl.Adornee = inst
-                            hl.FillColor = color
-                            hl.OutlineColor = color
-                            hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
-                            hl.Parent = Workspace
-
-                            local bb = Instance.new("BillboardGui")
-                            bb.Name = "AtokMobLabel"
-                            bb.Adornee = part
-                            bb.Size = UDim2.fromOffset(170, 30)
-                            bb.StudsOffset = Vector3.new(0, 3, 0)
-                            bb.AlwaysOnTop = true
-                            bb.Parent = PlayerGui
-
-                            local label = New("TextLabel", {
-                                Size = UDim2.fromScale(1, 1),
-                                BackgroundTransparency = 1,
-                                TextColor3 = color,
-                                TextStrokeTransparency = 0.2,
-                                TextStrokeColor3 = Color3.new(0, 0, 0),
-                                Font = BOLD,
-                                TextSize = 12,
-                                Parent = bb,
-                            })
-                            
-                            ESPObjects[inst] = { Highlight = hl, Billboard = bb, Label = label, Category = "ATOK_MOB", Part = part }
-                        else
-                            local data = ESPObjects[inst]
-                            if data.Category == "ATOK_MOB" then
-                                data.Highlight.FillColor = color
-                                data.Highlight.OutlineColor = color
-                                data.Label.TextColor3 = color
-                                data.Label.Text = string.format("%s (%s)", inst.Name, status)
-                            end
-                        end
-                    else
-                        if ESPObjects[inst] and ESPObjects[inst].Category == "ATOK_MOB" then
-                            RemoveESP(inst)
-                        end
-                    end
-                end
-            else
-                if ESPObjects[inst] and ESPObjects[inst].Category == "ATOK_MOB" then
-                    RemoveESP(inst)
-                end
-            end
-        end
-    end
-end
+local function RefreshESP() ClearESP() ScanESP() end
 
 --==============================================================
 -- TARGETS / TELEPORT / AUTO TELEPORT
@@ -1389,13 +621,10 @@ local function InSafeZone(part, zones)
         if NameHasSafe(node.Name) then return true end
         node = node.Parent
     end
-
     for _, zone in ipairs(zones) do
         local rel = zone.CFrame:PointToObjectSpace(part.Position)
         local half = zone.Size / 2
-        if math.abs(rel.X) <= half.X + 2
-            and math.abs(rel.Y) <= half.Y + 6
-            and math.abs(rel.Z) <= half.Z + 2 then
+        if math.abs(rel.X) <= half.X + 2 and math.abs(rel.Y) <= half.Y + 6 and math.abs(rel.Z) <= half.Z + 2 then
             return true
         end
     end
@@ -1405,11 +634,7 @@ end
 local function RefreshTargets()
     if os.clock() - TargetCache.Time < 2 then return end
     TargetCache.Time = os.clock()
-    TargetCache.Key = {}
-    TargetCache.Note = {}
-    TargetCache.Drawer = {}
-    TargetCache.Tape = {}
-    TargetCache.Cekgu = {}
+    TargetCache.Key = {} TargetCache.Note = {} TargetCache.Drawer = {} TargetCache.Tape = {} TargetCache.Cekgu = {}
 
     local char = Character()
     local zones = {}
@@ -1424,33 +649,27 @@ local function RefreshTargets()
         if not (char and inst:IsDescendantOf(char)) then
             if IsCekguMap then
                 local cat = GetCategory(inst.Name)
-                if cat == "CEKGU_ITEM" or cat == "CEKGU_KEY" then
+                if cat then
                     local part = GetPart(inst)
-                    if part then
+                    if part and not IsInsideDrawer(inst) then
                         table.insert(found, { Part = part, Cat = "CEKGU" })
                     end
                 end
             elseif IsAtok then
                 if AtokTape then
-                    if IsTapeName(inst) and not (inst:IsA("Model") and HasTapeDescendant(inst)) then
+                    if string.find(string.lower(inst.Name), "tape", 1, true) or string.find(string.lower(inst.Name), "pita", 1, true) then
                         local part = GetPart(inst)
-                        if part then
-                            table.insert(found, { Part = part, Cat = "TAPE" })
-                        end
+                        if part then table.insert(found, { Part = part, Cat = "TAPE" }) end
                     end
                 else
-                    if IsDrawerTarget(inst) then
+                    if string.find(string.lower(inst.Name), "drawer", 1, true) then
                         local part = GetPart(inst)
-                        if part then
-                            table.insert(found, { Part = part, Cat = "DRAWER" })
-                        end
+                        if part then table.insert(found, { Part = part, Cat = "DRAWER" }) end
                     end
                     local cat = GetCategory(inst.Name)
                     if cat then
                         local part = GetPart(inst)
-                        if part then
-                            table.insert(found, { Part = part, Cat = cat })
-                        end
+                        if part then table.insert(found, { Part = part, Cat = "ATOK_ITEM" }) end
                     end
                 end
             else
@@ -1467,21 +686,13 @@ local function RefreshTargets()
 
     for _, item in ipairs(found) do
         if not InSafeZone(item.Part, zones) then
-            if item.Cat == "DRAWER" or item.Cat == "TAPE" then
-                local list = (item.Cat == "DRAWER") and TargetCache.Drawer or TargetCache.Tape
-                local duplicate = false
-                for _, other in ipairs(list) do
-                    if (other.Position - item.Part.Position).Magnitude < 1.5 then
-                        duplicate = true
-                        break
-                    end
-                end
-                if not duplicate then
-                    table.insert(list, item.Part)
-                end
+            if item.Cat == "DRAWER" then
+                table.insert(TargetCache.Drawer, item.Part)
+            elseif item.Cat == "TAPE" then
+                table.insert(TargetCache.Tape, item.Part)
             elseif item.Cat == "CEKGU" then
                 table.insert(TargetCache.Cekgu, item.Part)
-            elseif string.find(item.Cat, "KEY") or item.Cat == "NOTE" or item.Cat == "CROWBAR" or item.Cat == "KEYNOTE" then
+            elseif item.Cat == "ATOK_ITEM" or string.find(item.Cat, "KEY") or item.Cat == "NOTE" or item.Cat == "CROWBAR" or item.Cat == "KEYNOTE" then
                 table.insert(TargetCache.Key, item.Part)
             end
         end
@@ -1502,10 +713,7 @@ local function PickUnvisited(list, findNearest)
                     break
                 end
             end
-
-            if not isVisited then
-                table.insert(unvisited, part)
-            end
+            if not isVisited then table.insert(unvisited, part) end
         end
     end
 
@@ -1525,10 +733,7 @@ local function PickUnvisited(list, findNearest)
             local shortest = math.huge
             for _, part in ipairs(unvisited) do
                 local d = (root.Position - part.Position).Magnitude
-                if d < shortest then
-                    shortest = d
-                    pick = part
-                end
+                if d < shortest then shortest = d pick = part end
             end
         else
             pick = unvisited[1]
@@ -1540,9 +745,7 @@ local function PickUnvisited(list, findNearest)
     -- Simpan ke memori
     if pick then
         table.insert(State.VisitedPositions, pick.Position)
-        if #State.VisitedPositions > 100 then
-            table.remove(State.VisitedPositions, 1)
-        end
+        if #State.VisitedPositions > 100 then table.remove(State.VisitedPositions, 1) end
     end
 
     return pick
@@ -1555,81 +758,27 @@ local function TeleportLoading(label)
     if TeleportLoadingActive then return false end
     TeleportLoadingActive = true
 
-    local gui = New("ScreenGui", {
-        Name = "YvoneTeleport",
-        ResetOnSpawn = false,
-        IgnoreGuiInset = true,
-        DisplayOrder = 450,
-        Parent = PlayerGui,
-    })
-
-    local dim = New("Frame", {
-        Size = UDim2.fromScale(1, 1),
-        BackgroundColor3 = Color3.new(0, 0, 0),
-        BackgroundTransparency = 0.45,
-        BorderSizePixel = 0,
-        Active = true,
-        Parent = gui,
-    })
-
-    local card = New("Frame", {
-        AnchorPoint = CENTER,
-        Position = CENTER_POS,
-        Size = UDim2.fromOffset(300, 190),
-        BackgroundColor3 = C.White,
-        Parent = dim,
-    })
-    Round(card, 18)
-    Stroke(card, C.Stroke, 1.4, 0.15)
-    Grad(card, Color3.fromRGB(28, 29, 36), Color3.fromRGB(10, 11, 14), 120)
+    local gui = New("ScreenGui", { Name = "YvoneTeleport", ResetOnSpawn = false, IgnoreGuiInset = true, DisplayOrder = 450, Parent = PlayerGui })
+    local dim = New("Frame", { Size = UDim2.fromScale(1, 1), BackgroundColor3 = Color3.new(0, 0, 0), BackgroundTransparency = 0.45, BorderSizePixel = 0, Active = true, Parent = gui })
+    local card = New("Frame", { AnchorPoint = CENTER, Position = CENTER_POS, Size = UDim2.fromOffset(300, 190), BackgroundColor3 = C.White, Parent = dim })
+    Round(card, 18) Stroke(card, C.Stroke, 1.4, 0.15) Grad(card, Color3.fromRGB(28, 29, 36), Color3.fromRGB(10, 11, 14), 120)
 
     local cam = Workspace.CurrentCamera
     local vs = cam and cam.ViewportSize or Vector2.new(1280, 720)
     New("UIScale", { Scale = math.clamp(math.min(vs.X / 420, vs.Y / 260, 1), 0.6, 1), Parent = card })
 
-    local ring = New("Frame", {
-        AnchorPoint = Vector2.new(0.5, 0),
-        Position = UDim2.new(0.5, 0, 0, 22),
-        Size = UDim2.fromOffset(44, 44),
-        BackgroundTransparency = 1,
-        Parent = card,
-    })
-    Round(ring, 22)
-    Stroke(ring, C.Stroke, 3, 0.3)
-
-    local orbit = New("Frame", {
-        Size = UDim2.fromScale(1, 1),
-        BackgroundTransparency = 1,
-        Parent = ring,
-    })
-    local dot = New("Frame", {
-        AnchorPoint = Vector2.new(0.5, 0.5),
-        Position = UDim2.new(0.5, 0, 0, 0),
-        Size = UDim2.fromOffset(10, 10),
-        BackgroundColor3 = C.White,
-        BorderSizePixel = 0,
-        Parent = orbit,
-    })
+    local ring = New("Frame", { AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.new(0.5, 0, 0, 22), Size = UDim2.fromOffset(44, 44), BackgroundTransparency = 1, Parent = card })
+    Round(ring, 22) Stroke(ring, C.Stroke, 3, 0.3)
+    local orbit = New("Frame", { Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, Parent = ring })
+    local dot = New("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.new(0.5, 0, 0, 0), Size = UDim2.fromOffset(10, 10), BackgroundColor3 = C.White, BorderSizePixel = 0, Parent = orbit })
     Round(dot, 5)
 
     Text(card, "Teleporting...", UDim2.fromOffset(0, 78), UDim2.new(1, 0, 0, 22), 16, C.White, BOLD, Enum.TextXAlignment.Center)
     Text(card, "Destination: " .. (label or "Target"), UDim2.fromOffset(0, 100), UDim2.new(1, 0, 0, 18), 11, C.Gray, FONT, Enum.TextXAlignment.Center)
 
-    local barBg = New("Frame", {
-        AnchorPoint = Vector2.new(0.5, 0),
-        Position = UDim2.new(0.5, 0, 0, 130),
-        Size = UDim2.fromOffset(240, 6),
-        BackgroundColor3 = C.Stroke,
-        BorderSizePixel = 0,
-        Parent = card,
-    })
+    local barBg = New("Frame", { AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.new(0.5, 0, 0, 130), Size = UDim2.fromOffset(240, 6), BackgroundColor3 = C.Stroke, BorderSizePixel = 0, Parent = card })
     Round(barBg, 3)
-    local fill = New("Frame", {
-        Size = UDim2.new(0, 0, 1, 0),
-        BackgroundColor3 = C.White,
-        BorderSizePixel = 0,
-        Parent = barBg,
-    })
+    local fill = New("Frame", { Size = UDim2.new(0, 0, 1, 0), BackgroundColor3 = C.White, BorderSizePixel = 0, Parent = barBg })
     Round(fill, 3)
     local pct = Text(card, "0%", UDim2.fromOffset(0, 140), UDim2.new(1, 0, 0, 18), 11, C.White, BOLD, Enum.TextXAlignment.Center)
     Text(card, "Free access - VIP teleports instantly", UDim2.fromOffset(0, 164), UDim2.new(1, 0, 0, 16), 9, C.Muted, FONT, Enum.TextXAlignment.Center)
@@ -1641,13 +790,8 @@ local function TeleportLoading(label)
     while true do
         local t = (os.clock() - started) / duration
         if t >= 1 then break end
-        if State.Closing or not gui.Parent then
-            ok = false
-            break
-        end
-        fill.Size = UDim2.new(t, 0, 1, 0)
-        pct.Text = math.floor(t * 100) .. "%"
-        orbit.Rotation = (os.clock() * 420) % 360
+        if State.Closing or not gui.Parent then ok = false break end
+        fill.Size = UDim2.new(t, 0, 1, 0) pct.Text = math.floor(t * 100) .. "%" orbit.Rotation = (os.clock() * 420) % 360
         RunService.RenderStepped:Wait()
     end
 
@@ -1665,9 +809,7 @@ local function TeleportCF(cf, label)
     return true
 end
 
-local function PlaceAt(pos, label)
-    return TeleportCF(CFrame.new(pos + Vector3.new(0, 4, 0)), label)
-end
+local function PlaceAt(pos, label) return TeleportCF(CFrame.new(pos + Vector3.new(0, 4, 0)), label) end
 
 local function TeleportCFInstant(cf)
     local r = Root()
@@ -1677,9 +819,7 @@ local function TeleportCFInstant(cf)
     return true
 end
 
-local function PlaceAtInstant(pos)
-    return TeleportCFInstant(CFrame.new(pos + Vector3.new(0, 4, 0)))
-end
+local function PlaceAtInstant(pos) return TeleportCFInstant(CFrame.new(pos + Vector3.new(0, 4, 0))) end
 
 local function IsNearOpah(radius)
     if not IsOpahMap then return false end
@@ -1688,25 +828,12 @@ local function IsNearOpah(radius)
     local pos = root.Position
     local char = Character()
     for _, inst in ipairs(Workspace:GetDescendants()) do
-        if (inst:IsA("Model") or inst:IsA("BasePart")) then
-            if string.find(string.lower(inst.Name), "opah", 1, true) then
-                if not (char and inst:IsDescendantOf(char)) then
-                    local part = GetPart(inst)
-                    if part and part.Parent then
-                        if (part.Position - pos).Magnitude <= radius then
-                            local hum = nil
-                            if inst:IsA("Model") then
-                                hum = inst:FindFirstChildOfClass("Humanoid")
-                            elseif inst.Parent and inst.Parent:IsA("Model") then
-                                hum = inst.Parent:FindFirstChildOfClass("Humanoid")
-                            end
-                            
-                            if hum and hum.Health <= 0 then
-                            else
-                                return true
-                            end
-                        end
-                    end
+        if (inst:IsA("Model") or inst:IsA("BasePart")) and string.find(string.lower(inst.Name), "opah", 1, true) then
+            if not (char and inst:IsDescendantOf(char)) then
+                local part = GetPart(inst)
+                if part and part.Parent and (part.Position - pos).Magnitude <= radius then
+                    local hum = inst:IsA("Model") and inst:FindFirstChildOfClass("Humanoid") or (inst.Parent and inst.Parent:IsA("Model") and inst.Parent:FindFirstChildOfClass("Humanoid"))
+                    if not (hum and hum.Health <= 0) then return true end
                 end
             end
         end
@@ -1719,10 +846,14 @@ local function ZonePos(inst)
     return inst:GetPivot().Position
 end
 
+-- SAFE ZONE KHUSUS (Cekgu pakai Spawn Awal)
 local function SafePosition()
-    if CachedSafeZone and CachedSafeZone.Parent then
-        return ZonePos(CachedSafeZone)
+    if IsCekguMap then
+        if CekguSpawnCFrame then return CekguSpawnCFrame.Position end
+        return nil
     end
+
+    if CachedSafeZone and CachedSafeZone.Parent then return ZonePos(CachedSafeZone) end
     CachedSafeZone = nil
 
     local best, bestRank
@@ -1731,10 +862,7 @@ local function SafePosition()
             local n = string.lower(o.Name)
             for rank, k in ipairs(SAFE_KEYS) do
                 if string.find(n, k, 1, true) then
-                    if not bestRank or rank < bestRank then
-                        best = o
-                        bestRank = rank
-                    end
+                    if not bestRank or rank < bestRank then best = o bestRank = rank end
                     break
                 end
             end
@@ -1748,53 +876,32 @@ end
 
 local function TeleportSafe()
     if TeleportLoadingActive then return end
-
     local root = Root()
     if not root then Notify("Teleport", "Character belum siap.", "err") return end
 
     if IsAtok then
         if AtokTape then
-            if not SpawnCFrame then
-                Notify("Teleport", "Posisi spawn belum tersimpan.", "err")
-                return
-            end
-            if TeleportCFInstant(SpawnCFrame) then
-                Notify("Teleport", "Teleported to your spawn.")
-            end
+            if not SpawnCFrame then Notify("Teleport", "Posisi spawn belum tersimpan.", "err") return end
+            if TeleportCFInstant(SpawnCFrame) then Notify("Teleport", "Teleported to your spawn.") end
         else
-            if TeleportCFInstant(CFrame.new(ATOK_SAFE_POS)) then
-                Notify("Teleport", "Teleported to Safe Zone.")
-            end
+            if TeleportCFInstant(CFrame.new(ATOK_SAFE_POS)) then Notify("Teleport", "Teleported to Safe Zone.") end
         end
         return
     end
 
     local pos = SafePosition()
     if not pos then Notify("Teleport", "Safe Zone tidak ditemukan.", "err") return end
-    if PlaceAtInstant(pos) then
-        Notify("Teleport", "Teleported to Safe Zone.")
-    end
+    if PlaceAtInstant(pos) then Notify("Teleport", "Teleported to Safe Zone.") end
 end
 
 local function SetFarmStatus(text, color)
-    if FarmStatusText and FarmStatusText.Parent then
-        FarmStatusText.Text = text
-    end
-    if FarmStatusDot and FarmStatusDot.Parent then
-        Tween(FarmStatusDot, 0.2, { BackgroundColor3 = color or C.Gray })
-    end
+    if FarmStatusText and FarmStatusText.Parent then FarmStatusText.Text = text end
+    if FarmStatusDot and FarmStatusDot.Parent then Tween(FarmStatusDot, 0.2, { BackgroundColor3 = color or C.Gray }) end
 end
 
 local TeleportBusy = false
-
-local function RefreshNow()
-    TargetCache.Time = 0
-    RefreshTargets()
-end
-
-local function Rescan()
-    if not IsVip then RefreshNow() end
-end
+local function RefreshNow() TargetCache.Time = 0 RefreshTargets() end
+local function Rescan() if not IsVip then RefreshNow() end end
 
 local function PlaceNow(pos)
     local r = Root()
@@ -1815,15 +922,11 @@ end
 local function TeleportItem(kind)
     if TeleportLoadingActive then return end
     if not Root() then Notify("Teleport", "Character belum siap.", "err") return end
-
     if IsNearOpah(OPAH_CANCEL_RADIUS) then return end
 
     RefreshNow()
     local first = (kind == "key") and TargetCache.Key or TargetCache.Note
-    if #first == 0 then
-        Notify("Quick Action", "Target belum ditemukan.", "err")
-        return
-    end
+    if #first == 0 then Notify("Quick Action", "Target belum ditemukan.", "err") return end
 
     if not TeleportLoading((kind == "key") and "Key" or "Note") then return end
 
@@ -1831,270 +934,117 @@ local function TeleportItem(kind)
     local list = (kind == "key") and TargetCache.Key or TargetCache.Note
     local target = PickUnvisited(list, true)
 
-    if target and PlaceNow(target.Position) then
-        Notify("Quick Action", "Target ditemukan.")
-    else
-        Notify("Quick Action", "Target belum ditemukan.", "err")
-    end
+    if target and PlaceNow(target.Position) then Notify("Quick Action", "Target ditemukan.")
+    else Notify("Quick Action", "Target belum ditemukan.", "err") end
 end
 
 local function SmartTeleport()
     RunFarm(function()
-        if not Root() then
-            SetFarmStatus("Waiting for character", C.Gray)
-            Notify("Teleport", "Character belum siap.", "err")
-            return
-        end
-
-        if IsNearOpah(OPAH_CANCEL_RADIUS) then
-            SetFarmStatus("Opah terlalu dekat", C.Yellow)
-            return
-        end
+        if not Root() then SetFarmStatus("Waiting for character", C.Gray) return end
+        if IsNearOpah(OPAH_CANCEL_RADIUS) then SetFarmStatus("Opah terlalu dekat", C.Yellow) return end
 
         RefreshNow()
-        if #TargetCache.Key == 0 and #TargetCache.Note == 0 then
-            SetFarmStatus("No key or note found", C.Yellow)
-            return
-        end
-
-        if not TeleportLoading("Key / Note") then
-            SetFarmStatus("Teleport cancelled", C.Gray)
-            return
-        end
+        if #TargetCache.Key == 0 and #TargetCache.Note == 0 then SetFarmStatus("No key or note found", C.Yellow) return end
+        if not TeleportLoading("Key / Note") then SetFarmStatus("Teleport cancelled", C.Gray) return end
 
         Rescan()
         local target = PickUnvisited(TargetCache.Key, true)
         local label = "Key"
+        if not target then target = PickUnvisited(TargetCache.Note, true) label = "Note" end
 
-        if not target then
-            target = PickUnvisited(TargetCache.Note, true)
-            label = "Note"
-        end
-
-        if target and PlaceNow(target.Position) then
-            SetFarmStatus("Teleported to " .. label, C.Green)
-        else
-            SetFarmStatus("No key or note found", C.Yellow)
-        end
+        if target and PlaceNow(target.Position) then SetFarmStatus("Teleported to " .. label, C.Green)
+        else SetFarmStatus("No key or note found", C.Yellow) end
     end)
 end
 
 local function TeleportDrawer(notify)
     RunFarm(function()
-        if not Root() then
-            SetFarmStatus("Waiting for character", C.Gray)
-            if notify then Notify("Teleport", "Character belum siap.", "err") end
-            return
-        end
-
-        if IsNearOpah(OPAH_CANCEL_RADIUS) then
-            SetFarmStatus("Opah terlalu dekat", C.Yellow)
-            return
-        end
+        if not Root() then if notify then Notify("Teleport", "Character belum siap.", "err") end return end
+        if IsNearOpah(OPAH_CANCEL_RADIUS) then SetFarmStatus("Opah terlalu dekat", C.Yellow) return end
 
         RefreshNow()
-        if #TargetCache.Drawer == 0 then
-            SetFarmStatus("No drawer found", C.Yellow)
-            if notify then Notify("Teleport", "Drawer tidak ditemukan.", "err") end
-            return
-        end
-
-        if not TeleportLoading("Drawer") then
-            SetFarmStatus("Teleport cancelled", C.Gray)
-            return
-        end
+        if #TargetCache.Drawer == 0 then SetFarmStatus("No drawer found", C.Yellow) if notify then Notify("Teleport", "Drawer tidak ditemukan.", "err") end return end
+        if not TeleportLoading("Drawer") then SetFarmStatus("Teleport cancelled", C.Gray) return end
 
         Rescan()
-        local list = {}
-        for _, part in ipairs(TargetCache.Drawer) do
-            if part.Parent then table.insert(list, part) end
-        end
+        local pick = PickUnvisited(TargetCache.Drawer, false)
 
-        local pick = PickUnvisited(list, false)
-
-        if pick and PlaceNow(pick.Position) then
-            SetFarmStatus(string.format("Random drawer (%d found)", #list), C.Green)
-            if notify then Notify("Teleport", "Teleported to a random drawer.") end
-        else
-            SetFarmStatus("No drawer found", C.Yellow)
-            if notify then Notify("Teleport", "Drawer tidak ditemukan.", "err") end
-        end
+        if pick and PlaceNow(pick.Position) then SetFarmStatus("Random drawer", C.Green) if notify then Notify("Teleport", "Teleported to a random drawer.") end
+        else SetFarmStatus("No drawer found", C.Yellow) if notify then Notify("Teleport", "Drawer tidak ditemukan.", "err") end end
     end)
 end
 
 local function TeleportTape(notify)
     RunFarm(function()
-        if not Root() then
-            SetFarmStatus("Waiting for character", C.Gray)
-            if notify then Notify("Teleport", "Character belum siap.", "err") end
-            return
-        end
-
-        if IsNearOpah(OPAH_CANCEL_RADIUS) then
-            SetFarmStatus("Opah terlalu dekat", C.Yellow)
-            return
-        end
+        if not Root() then if notify then Notify("Teleport", "Character belum siap.", "err") end return end
+        if IsNearOpah(OPAH_CANCEL_RADIUS) then SetFarmStatus("Opah terlalu dekat", C.Yellow) return end
 
         RefreshNow()
-        if #TargetCache.Tape == 0 then
-            SetFarmStatus("No tape found", C.Yellow)
-            if notify then Notify("Teleport", "Tape / pita tidak ditemukan.", "err") end
-            return
-        end
-
-        if not TeleportLoading("Tape") then
-            SetFarmStatus("Teleport cancelled", C.Gray)
-            return
-        end
+        if #TargetCache.Tape == 0 then SetFarmStatus("No tape found", C.Yellow) if notify then Notify("Teleport", "Tape tidak ditemukan.", "err") end return end
+        if not TeleportLoading("Tape") then SetFarmStatus("Teleport cancelled", C.Gray) return end
 
         Rescan()
-        local list = {}
-        for _, part in ipairs(TargetCache.Tape) do
-            if part.Parent then table.insert(list, part) end
-        end
+        local pick = PickUnvisited(TargetCache.Tape, false)
 
-        local pick = PickUnvisited(list, false)
-
-        if pick and PlaceNow(pick.Position) then
-            SetFarmStatus(string.format("Random tape (%d found)", #list), C.Green)
-            if notify then Notify("Teleport", "Teleported to a random tape.") end
-        else
-            SetFarmStatus("No tape found", C.Yellow)
-            if notify then Notify("Teleport", "Tape / pita tidak ditemukan.", "err") end
-        end
+        if pick and PlaceNow(pick.Position) then SetFarmStatus("Random tape", C.Green) if notify then Notify("Teleport", "Teleported to a random tape.") end
+        else SetFarmStatus("No tape found", C.Yellow) if notify then Notify("Teleport", "Tape tidak ditemukan.", "err") end end
     end)
 end
 
 local function TeleportCekguRandom(notify)
     RunFarm(function()
-        if not Root() then
-            SetFarmStatus("Waiting for character", C.Gray)
-            if notify then Notify("Teleport", "Character belum siap.", "err") end
-            return
-        end
+        if not Root() then if notify then Notify("Teleport", "Character belum siap.", "err") end return end
 
         RefreshNow()
-        if #TargetCache.Cekgu == 0 then
-            SetFarmStatus("No item found", C.Yellow)
-            if notify then Notify("Teleport", "Item tidak ditemukan.", "err") end
-            return
-        end
-
-        if not TeleportLoading("Item Cekgu") then
-            SetFarmStatus("Teleport cancelled", C.Gray)
-            return
-        end
+        if #TargetCache.Cekgu == 0 then SetFarmStatus("No item found", C.Yellow) if notify then Notify("Teleport", "Item tidak ditemukan.", "err") end return end
+        if not TeleportLoading("Item Cekgu") then SetFarmStatus("Teleport cancelled", C.Gray) return end
 
         Rescan()
-        local list = {}
-        for _, part in ipairs(TargetCache.Cekgu) do
-            if part.Parent then table.insert(list, part) end
-        end
+        local pick = PickUnvisited(TargetCache.Cekgu, false)
 
-        local pick = PickUnvisited(list, false)
-
-        if pick and PlaceNow(pick.Position) then
-            SetFarmStatus(string.format("Random item (%d found)", #list), C.Green)
-            if notify then Notify("Teleport", "Teleported to random Cekgu item.") end
-        else
-            SetFarmStatus("No item found", C.Yellow)
-            if notify then Notify("Teleport", "Item tidak ditemukan.", "err") end
-        end
+        if pick and PlaceNow(pick.Position) then SetFarmStatus("Random Cekgu Item", C.Green) if notify then Notify("Teleport", "Teleported to random item.") end
+        else SetFarmStatus("No item found", C.Yellow) if notify then Notify("Teleport", "Item tidak ditemukan.", "err") end end
     end)
 end
 
 local function TeleportAtokItemRandom(notify)
     RunFarm(function()
-        if not Root() then
-            SetFarmStatus("Waiting for character", C.Gray)
-            if notify then Notify("Teleport", "Character belum siap.", "err") end
-            return
-        end
+        if not Root() then if notify then Notify("Teleport", "Character belum siap.", "err") end return end
 
         RefreshNow()
-        if #TargetCache.Key == 0 and #TargetCache.Note == 0 then
-            SetFarmStatus("No item found", C.Yellow)
-            if notify then Notify("Teleport", "Item tidak ditemukan.", "err") end
-            return
-        end
-
-        if not TeleportLoading("Item Atok") then
-            SetFarmStatus("Teleport cancelled", C.Gray)
-            return
-        end
+        if #TargetCache.Key == 0 then SetFarmStatus("No item found", C.Yellow) if notify then Notify("Teleport", "Item tidak ditemukan.", "err") end return end
+        if not TeleportLoading("Item Atok") then SetFarmStatus("Teleport cancelled", C.Gray) return end
 
         Rescan()
-        local list = {}
-        for _, part in ipairs(TargetCache.Key) do
-            if part.Parent then table.insert(list, part) end
-        end
-        for _, part in ipairs(TargetCache.Note) do
-            if part.Parent then table.insert(list, part) end
-        end
+        local pick = PickUnvisited(TargetCache.Key, false)
 
-        local pick = PickUnvisited(list, false)
-
-        if pick and PlaceNow(pick.Position) then
-            SetFarmStatus(string.format("Random item (%d found)", #list), C.Green)
-            if notify then Notify("Teleport", "Teleported to random Atok item.") end
-        else
-            SetFarmStatus("No item found", C.Yellow)
-            if notify then Notify("Teleport", "Item tidak ditemukan.", "err") end
-        end
+        if pick and PlaceNow(pick.Position) then SetFarmStatus("Random Atok Item", C.Green) if notify then Notify("Teleport", "Teleported to random item.") end
+        else SetFarmStatus("No item found", C.Yellow) if notify then Notify("Teleport", "Item tidak ditemukan.", "err") end end
     end)
 end
 
 local function FarmTeleport()
-    if IsCekguMap then
-        TeleportCekguRandom(false)
+    if IsCekguMap then TeleportCekguRandom(false)
     elseif IsAtok then
-        if AtokTape then
-            TeleportTape(false)
-        else
-            TeleportAtokItemRandom(false)
-        end
-    else
-        SmartTeleport()
-    end
+        if AtokTape then TeleportTape(false)
+        else TeleportAtokItemRandom(false) end
+    else SmartTeleport() end
 end
 
 --==============================================================
--- MOVEMENT
+-- MOVEMENT (Speed, Noclip, Fly)
 --==============================================================
-
-local function UpdateSpeed()
-    local h = Humanoid()
-    if h then h.WalkSpeed = State.Speed end
-end
-
-local function RestoreCollision()
-    for part, original in pairs(OriginalCollision) do
-        if part and part.Parent then
-            pcall(function() part.CanCollide = original end)
-        end
-    end
-    table.clear(OriginalCollision)
-end
+local function UpdateSpeed() local h = Humanoid() if h then h.WalkSpeed = State.Speed end end
+local function RestoreCollision() for part, original in pairs(OriginalCollision) do if part and part.Parent then pcall(function() part.CanCollide = original end) end end table.clear(OriginalCollision) end
 
 local function ToggleNoclip(enabled)
-    State.Noclip = enabled
-    Disconnect(NoclipConnection)
-    NoclipConnection = nil
-
-    if not enabled then
-        RestoreCollision()
-        Notify("Noclip", "Noclip dinonaktifkan.")
-        return
-    end
-
+    State.Noclip = enabled Disconnect(NoclipConnection) NoclipConnection = nil
+    if not enabled then RestoreCollision() Notify("Noclip", "Noclip dinonaktifkan.") return end
     NoclipConnection = RunService.Stepped:Connect(function()
-        local c = Character()
-        if not c then return end
+        local c = Character() if not c then return end
         for _, p in ipairs(c:GetDescendants()) do
             if p:IsA("BasePart") then
-                if OriginalCollision[p] == nil then
-                    OriginalCollision[p] = p.CanCollide
-                end
+                if OriginalCollision[p] == nil then OriginalCollision[p] = p.CanCollide end
                 p.CanCollide = false
             end
         end
@@ -2103,132 +1053,62 @@ local function ToggleNoclip(enabled)
 end
 
 local function ClearFly()
-    Disconnect(FlyConnection)
-    FlyConnection = nil
+    Disconnect(FlyConnection) FlyConnection = nil
     if FlyVelocity then FlyVelocity:Destroy() FlyVelocity = nil end
     if FlyOrientation then FlyOrientation:Destroy() FlyOrientation = nil end
     if FlyAttachment then FlyAttachment:Destroy() FlyAttachment = nil end
     FlyHold = false
 end
 
-local function SyncFlySwitches(v)
-    for _, s in ipairs(FlySwitches) do s.Set(v, true) end
-end
+local function SyncFlySwitches(v) for _, s in ipairs(FlySwitches) do s.Set(v, true) end end
 
 local function SetFly(enabled)
-    State.Fly = enabled
-    ClearFly()
-
+    State.Fly = enabled ClearFly()
     local hum = Humanoid()
-
     if not enabled then
         SyncFlySwitches(false)
-        if hum then
-            hum.PlatformStand = false
-            hum:ChangeState(Enum.HumanoidStateType.GettingUp)
-        end
-        Notify("Fly Mode", "Fly mode deactivated.")
-        return
+        if hum then hum.PlatformStand = false hum:ChangeState(Enum.HumanoidStateType.GettingUp) end
+        Notify("Fly Mode", "Fly mode deactivated.") return
     end
-
     local root = Root()
-    if not root or not hum then
-        State.Fly = false
-        SyncFlySwitches(false)
-        Notify("Fly Mode", "Character belum siap.", "err")
-        return
-    end
+    if not root or not hum then State.Fly = false SyncFlySwitches(false) Notify("Fly Mode", "Character belum siap.", "err") return end
 
-    FlyAttachment = Instance.new("Attachment")
-    FlyAttachment.Name = "YvoneFlyAttachment"
-    FlyAttachment.Parent = root
+    FlyAttachment = Instance.new("Attachment") FlyAttachment.Name = "YvoneFlyAttachment" FlyAttachment.Parent = root
+    FlyVelocity = Instance.new("LinearVelocity") FlyVelocity.Name = "YvoneFlyVelocity" FlyVelocity.Attachment0 = FlyAttachment FlyVelocity.RelativeTo = Enum.ActuatorRelativeTo.World FlyVelocity.VelocityConstraintMode = Enum.VelocityConstraintMode.Vector FlyVelocity.VectorVelocity = Vector3.zero FlyVelocity.MaxForce = math.huge FlyVelocity.Parent = root
+    FlyOrientation = Instance.new("AlignOrientation") FlyOrientation.Name = "YvoneFlyOrientation" FlyOrientation.Mode = Enum.OrientationAlignmentMode.OneAttachment FlyOrientation.Attachment0 = FlyAttachment FlyOrientation.MaxTorque = math.huge FlyOrientation.Responsiveness = 15 FlyOrientation.Parent = root
 
-    FlyVelocity = Instance.new("LinearVelocity")
-    FlyVelocity.Name = "YvoneFlyVelocity"
-    FlyVelocity.Attachment0 = FlyAttachment
-    FlyVelocity.RelativeTo = Enum.ActuatorRelativeTo.World
-    FlyVelocity.VelocityConstraintMode = Enum.VelocityConstraintMode.Vector
-    FlyVelocity.VectorVelocity = Vector3.zero
-    FlyVelocity.MaxForce = math.huge
-    FlyVelocity.Parent = root
-
-    FlyOrientation = Instance.new("AlignOrientation")
-    FlyOrientation.Name = "YvoneFlyOrientation"
-    FlyOrientation.Mode = Enum.OrientationAlignmentMode.OneAttachment
-    FlyOrientation.Attachment0 = FlyAttachment
-    FlyOrientation.MaxTorque = math.huge
-    FlyOrientation.Responsiveness = 15
-    FlyOrientation.Parent = root
-
-    hum.PlatformStand = true
-    SyncFlySwitches(true)
-    if FlyPanel then FlyPanel.Visible = true end
+    hum.PlatformStand = true SyncFlySwitches(true) if FlyPanel then FlyPanel.Visible = true end
 
     FlyConnection = RunService.RenderStepped:Connect(function()
-        local r = Root()
-        local h = Humanoid()
-        local cam = Workspace.CurrentCamera
+        local r = Root() local h = Humanoid() local cam = Workspace.CurrentCamera
         if not State.Fly or not r or not h or not cam or not FlyVelocity then return end
-
-        local look = cam.CFrame.LookVector
-        local hv = State.FlyHeight / 100
-        local dir
-
-        if FlyHold then
-            dir = Vector3.new(look.X, look.Y * hv, look.Z)
+        local look = cam.CFrame.LookVector local hv = State.FlyHeight / 100 local dir
+        if FlyHold then dir = Vector3.new(look.X, look.Y * hv, look.Z)
         else
             dir = h.MoveDirection
             if UIS:IsKeyDown(Enum.KeyCode.Space) then dir = dir + Vector3.new(0, hv, 0) end
             if UIS:IsKeyDown(Enum.KeyCode.LeftControl) then dir = dir - Vector3.new(0, hv, 0) end
         end
-
-        if dir.Magnitude > 0.01 then
-            FlyVelocity.VectorVelocity = dir.Unit * State.FlySpeed
-        else
-            FlyVelocity.VectorVelocity = Vector3.zero
-        end
-
+        if dir.Magnitude > 0.01 then FlyVelocity.VectorVelocity = dir.Unit * State.FlySpeed else FlyVelocity.VectorVelocity = Vector3.zero end
         local flat = Vector3.new(look.X, 0, look.Z)
-        if flat.Magnitude > 0.01 and FlyOrientation then
-            FlyOrientation.CFrame = CFrame.lookAt(Vector3.zero, flat.Unit)
-        end
+        if flat.Magnitude > 0.01 and FlyOrientation then FlyOrientation.CFrame = CFrame.lookAt(Vector3.zero, flat.Unit) end
     end)
-
     Notify("Success!", "Fly mode activated.")
 end
 
 --==============================================================
--- MAIN INTERFACE
+-- MAIN INTERFACE (UI)
 --==============================================================
-
 local function Launch()
     if State.Launched then return end
     State.Launched = true
-
     if LoadingGui then LoadingGui:Destroy() end
 
-    MainGui = New("ScreenGui", {
-        Name = "YvoneHub",
-        ResetOnSpawn = false,
-        IgnoreGuiInset = true,
-        DisplayOrder = 100,
-        Parent = PlayerGui,
-    })
-
+    MainGui = New("ScreenGui", { Name = "YvoneHub", ResetOnSpawn = false, IgnoreGuiInset = true, DisplayOrder = 100, Parent = PlayerGui })
     local BottomNav
 
-    MainWindow = New("Frame", {
-        Name = "MainWindow",
-        AnchorPoint = Vector2.new(0.5, 0.5),
-        Position = UDim2.new(0.5, 0, 0.5, -28),
-        Size = UDim2.fromOffset(880, 500),
-        BackgroundColor3 = C.White,
-        ClipsDescendants = true,
-        Parent = MainGui,
-    })
-    Round(MainWindow, 22)
-    Stroke(MainWindow, C.Stroke, 1.5, 0.15)
-    Grad(MainWindow, Color3.fromRGB(24, 25, 30), Color3.fromRGB(9, 10, 13), 135)
+    MainWindow = New("Frame", { Name = "MainWindow", AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.new(0.5, 0, 0.5, -28), Size = UDim2.fromOffset(880, 500), BackgroundColor3 = C.White, ClipsDescendants = true, Parent = MainGui })
+    Round(MainWindow, 22) Stroke(MainWindow, C.Stroke, 1.5, 0.15) Grad(MainWindow, Color3.fromRGB(24, 25, 30), Color3.fromRGB(9, 10, 13), 135)
     local WindowScale = AddScale(MainWindow)
 
     local function SetUIVisible(v)
@@ -2237,103 +1117,42 @@ local function Launch()
         if OpenButton then OpenButton.Visible = not v end
     end
 
-    local Sidebar = New("Frame", {
-        Size = UDim2.new(0, 170, 1, 0),
-        BackgroundColor3 = C.Side,
-        BorderSizePixel = 0,
-        Parent = MainWindow,
-    })
+    local Sidebar = New("Frame", { Size = UDim2.new(0, 170, 1, 0), BackgroundColor3 = C.Side, BorderSizePixel = 0, Parent = MainWindow })
     Round(Sidebar, 22)
-    New("Frame", {
-        Size = UDim2.new(0, 40, 1, 0),
-        Position = UDim2.fromOffset(130, 0),
-        BackgroundColor3 = C.Side,
-        BorderSizePixel = 0,
-        Parent = Sidebar,
-    })
-    New("Frame", {
-        Size = UDim2.new(0, 1, 1, 0),
-        Position = UDim2.fromOffset(170, 0),
-        BackgroundColor3 = C.Stroke,
-        BackgroundTransparency = 0.5,
-        BorderSizePixel = 0,
-        Parent = MainWindow,
-    })
+    New("Frame", { Size = UDim2.new(0, 40, 1, 0), Position = UDim2.fromOffset(130, 0), BackgroundColor3 = C.Side, BorderSizePixel = 0, Parent = Sidebar })
+    New("Frame", { Size = UDim2.new(0, 1, 1, 0), Position = UDim2.fromOffset(170, 0), BackgroundColor3 = C.Stroke, BackgroundTransparency = 0.5, BorderSizePixel = 0, Parent = MainWindow })
 
     local Logo = Text(Sidebar, "Y", UDim2.fromOffset(0, 14), UDim2.new(1, 0, 0, 60), 56, C.White, BLACK, Enum.TextXAlignment.Center)
     Grad(Logo, C.White, Color3.fromRGB(120, 123, 133), 90)
     Text(Sidebar, "YVONE HUB", UDim2.fromOffset(0, 78), UDim2.new(1, 0, 0, 20), 15, C.White, BOLD, Enum.TextXAlignment.Center)
     Text(Sidebar, "BLACK EDITION", UDim2.fromOffset(0, 97), UDim2.new(1, 0, 0, 14), 10, C.Gray, FONT, Enum.TextXAlignment.Center)
 
-    local Nav = New("Frame", {
-        Size = UDim2.new(1, -20, 0, 280),
-        Position = UDim2.fromOffset(10, 126),
-        BackgroundTransparency = 1,
-        Parent = Sidebar,
-    })
+    local Nav = New("Frame", { Size = UDim2.new(1, -20, 0, 280), Position = UDim2.fromOffset(10, 126), BackgroundTransparency = 1, Parent = Sidebar })
     New("UIListLayout", { Padding = UDim.new(0, 4), SortOrder = Enum.SortOrder.LayoutOrder, Parent = Nav })
 
-    local Footer = New("Frame", {
-        Size = UDim2.new(1, -20, 0, 56),
-        Position = UDim2.new(0, 10, 1, -66),
-        Parent = Sidebar,
-    })
-    Panelize(Footer, 12, 0.4)
-    MakeIcon(IsVip and "crown" or "person", Footer, 24, IsVip and C.Yellow or C.Gray, UDim2.fromOffset(12, 16))
+    local Footer = New("Frame", { Size = UDim2.new(1, -20, 0, 56), Position = UDim2.new(0, 10, 1, -66), Parent = Sidebar })
+    Panelize(Footer, 12, 0.4) MakeIcon(IsVip and "crown" or "person", Footer, 24, IsVip and C.Yellow or C.Gray, UDim2.fromOffset(12, 16))
     Text(Footer, "v2.0.0", UDim2.fromOffset(46, 10), UDim2.new(1, -50, 0, 18), 11, C.White, BOLD)
     Text(Footer, IsVip and "Premium Edition" or "Free Edition", UDim2.fromOffset(46, 28), UDim2.new(1, -50, 0, 16), 10, C.Gray)
 
-    local Content = New("Frame", {
-        Size = UDim2.new(1, -170, 1, 0),
-        Position = UDim2.fromOffset(170, 0),
-        BackgroundTransparency = 1,
-        ClipsDescendants = true,
-        Parent = MainWindow,
-    })
-
-    local DragStrip = New("Frame", {
-        Size = UDim2.new(1, 0, 0, 74),
-        BackgroundTransparency = 1,
-        Parent = Content,
-    })
+    local Content = New("Frame", { Size = UDim2.new(1, -170, 1, 0), Position = UDim2.fromOffset(170, 0), BackgroundTransparency = 1, ClipsDescendants = true, Parent = MainWindow })
+    local DragStrip = New("Frame", { Size = UDim2.new(1, 0, 0, 74), BackgroundTransparency = 1, Parent = Content })
     MakeDraggable(DragStrip, MainWindow, WindowScale)
 
     local Title = Text(Content, "Welcome Back!", UDim2.fromOffset(24, 14), UDim2.new(1, -260, 0, 30), 24, C.White, BOLD)
     local Subtitle = Text(Content, "Control everything, your way.", UDim2.fromOffset(24, 44), UDim2.new(1, -260, 0, 20), 13, C.Gray)
 
-    local Pill = New("Frame", {
-        Size = UDim2.fromOffset(160, 40),
-        Position = UDim2.new(1, -222, 0, 16),
-        Parent = Content,
-    })
-    Panelize(Pill, 12, 0.5)
-    local planColor = IsVip and C.Yellow or C.Gray
-    Pill:FindFirstChildOfClass("UIStroke").Color = planColor
-    Pill:FindFirstChildOfClass("UIStroke").Transparency = 0.65
+    local Pill = New("Frame", { Size = UDim2.fromOffset(160, 40), Position = UDim2.new(1, -222, 0, 16), Parent = Content })
+    Panelize(Pill, 12, 0.5) local planColor = IsVip and C.Yellow or C.Gray
+    Pill:FindFirstChildOfClass("UIStroke").Color = planColor Pill:FindFirstChildOfClass("UIStroke").Transparency = 0.65
     MakeIcon(IsVip and "crown" or "person", Pill, 22, planColor, UDim2.fromOffset(12, 9))
     Text(Pill, IsVip and "Premium User" or "Free User", UDim2.fromOffset(44, 0), UDim2.new(1, -48, 1, 0), 13, planColor, BOLD)
 
-    local CloseBtn = New("TextButton", {
-        Size = UDim2.fromOffset(34, 34),
-        Position = UDim2.new(1, -48, 0, 19),
-        BackgroundColor3 = C.Card2,
-        BackgroundTransparency = 0.35,
-        Text = "",
-        AutoButtonColor = false,
-        Parent = Content,
-    })
-    Round(CloseBtn, 17)
-    Stroke(CloseBtn, C.Stroke, 1, 0.5)
-    local CloseIcon = MakeIcon("close", CloseBtn, 14, C.White, CENTER_POS, CENTER)
-    CloseBtn.MouseEnter:Connect(function()
-        Tween(CloseBtn, 0.12, { BackgroundColor3 = C.Red, BackgroundTransparency = 0 })
-    end)
-    CloseBtn.MouseLeave:Connect(function()
-        Tween(CloseBtn, 0.12, { BackgroundColor3 = C.Card2, BackgroundTransparency = 0.35 })
-    end)
-    CloseBtn.MouseButton1Click:Connect(function()
-        SetUIVisible(false)
-    end)
+    local CloseBtn = New("TextButton", { Size = UDim2.fromOffset(34, 34), Position = UDim2.new(1, -48, 0, 19), BackgroundColor3 = C.Card2, BackgroundTransparency = 0.35, Text = "", AutoButtonColor = false, Parent = Content })
+    Round(CloseBtn, 17) Stroke(CloseBtn, C.Stroke, 1, 0.5) MakeIcon("close", CloseBtn, 14, C.White, CENTER_POS, CENTER)
+    CloseBtn.MouseEnter:Connect(function() Tween(CloseBtn, 0.12, { BackgroundColor3 = C.Red, BackgroundTransparency = 0 }) end)
+    CloseBtn.MouseLeave:Connect(function() Tween(CloseBtn, 0.12, { BackgroundColor3 = C.Card2, BackgroundTransparency = 0.35 }) end)
+    CloseBtn.MouseButton1Click:Connect(function() SetUIVisible(false) end)
 
     local TabList = {
         { "Home", "home", "Welcome Back!", "Control everything, your way." },
@@ -2345,170 +1164,71 @@ local function Launch()
         { "System", "info", "System", "Information and unload." },
     }
 
-    local Pages = {}
-    local Tabs = {}
-    local BottomTabs = {}
+    local Pages, Tabs, BottomTabs = {}, {}, {}
 
     for _, info in ipairs(TabList) do
-        local page = New("ScrollingFrame", {
-            Name = info[1],
-            Size = UDim2.new(1, 0, 1, -76),
-            Position = UDim2.fromOffset(0, 76),
-            BackgroundTransparency = 1,
-            BorderSizePixel = 0,
-            ScrollBarThickness = 3,
-            ScrollBarImageColor3 = C.Gray,
-            AutomaticCanvasSize = Enum.AutomaticSize.Y,
-            CanvasSize = UDim2.new(),
-            Visible = info[1] == "Home",
-            Parent = Content,
-        })
+        local page = New("ScrollingFrame", { Name = info[1], Size = UDim2.new(1, 0, 1, -76), Position = UDim2.fromOffset(0, 76), BackgroundTransparency = 1, BorderSizePixel = 0, ScrollBarThickness = 3, ScrollBarImageColor3 = C.Gray, AutomaticCanvasSize = Enum.AutomaticSize.Y, CanvasSize = UDim2.new(), Visible = info[1] == "Home", Parent = Content })
         if info[1] ~= "Home" then
             New("UIListLayout", { Padding = UDim.new(0, 8), SortOrder = Enum.SortOrder.LayoutOrder, Parent = page })
-            New("UIPadding", {
-                PaddingLeft = UDim.new(0, 14), PaddingRight = UDim.new(0, 14),
-                PaddingTop = UDim.new(0, 4), PaddingBottom = UDim.new(0, 16),
-                Parent = page,
-            })
+            New("UIPadding", { PaddingLeft = UDim.new(0, 14), PaddingRight = UDim.new(0, 14), PaddingTop = UDim.new(0, 4), PaddingBottom = UDim.new(0, 16), Parent = page })
         end
         Pages[info[1]] = page
     end
 
     local function SelectTab(name)
         State.CurrentTab = name
-
-        for pageName, page in pairs(Pages) do
-            page.Visible = pageName == name
-        end
-
-        for _, info in ipairs(TabList) do
-            if info[1] == name then
-                Title.Text = info[3]
-                Subtitle.Text = info[4]
-            end
-        end
-
+        for pageName, page in pairs(Pages) do page.Visible = pageName == name end
+        for _, info in ipairs(TabList) do if info[1] == name then Title.Text = info[3] Subtitle.Text = info[4] end end
         for tabName, t in pairs(Tabs) do
             local sel = tabName == name
-            Tween(t.Button, 0.15, { BackgroundTransparency = sel and 0 or 1 })
-            t.Stroke.Transparency = sel and 0.3 or 1
-            t.Bar.Visible = sel
-            SetIconColor(t.Icon, sel and C.White or C.Gray)
-            t.Label.TextColor3 = sel and C.White or C.Gray
-            t.Label.Font = sel and BOLD or FONT
+            Tween(t.Button, 0.15, { BackgroundTransparency = sel and 0 or 1 }) t.Stroke.Transparency = sel and 0.3 or 1 t.Bar.Visible = sel
+            SetIconColor(t.Icon, sel and C.White or C.Gray) t.Label.TextColor3 = sel and C.White or C.Gray t.Label.Font = sel and BOLD or FONT
         end
-
         for tabName, b in pairs(BottomTabs) do
             local sel = tabName == name
-            Tween(b.Button, 0.15, { BackgroundTransparency = sel and 0 or 1 })
-            b.Bar.Visible = sel
+            Tween(b.Button, 0.15, { BackgroundTransparency = sel and 0 or 1 }) b.Bar.Visible = sel
             SetIconColor(b.Icon, sel and C.White or C.Gray)
         end
     end
 
     for i, info in ipairs(TabList) do
-        local b = New("TextButton", {
-            Size = UDim2.new(1, 0, 0, 36),
-            BackgroundColor3 = C.Card2,
-            BackgroundTransparency = 1,
-            Text = "",
-            AutoButtonColor = false,
-            LayoutOrder = i,
-            Parent = Nav,
-        })
-        Round(b, 10)
-        local st = Stroke(b, C.White, 1, 1)
-        local bar = New("Frame", {
-            Size = UDim2.fromOffset(3, 22),
-            Position = UDim2.fromOffset(0, 7),
-            BackgroundColor3 = C.White,
-            BorderSizePixel = 0,
-            Visible = false,
-            Parent = b,
-        })
-        Round(bar, 2)
-        local icon = MakeIcon(info[2], b, 20, C.Gray, UDim2.fromOffset(14, 8))
+        local b = New("TextButton", { Size = UDim2.new(1, 0, 0, 36), BackgroundColor3 = C.Card2, BackgroundTransparency = 1, Text = "", AutoButtonColor = false, LayoutOrder = i, Parent = Nav })
+        Round(b, 10) local st = Stroke(b, C.White, 1, 1)
+        local bar = New("Frame", { Size = UDim2.fromOffset(3, 22), Position = UDim2.fromOffset(0, 7), BackgroundColor3 = C.White, BorderSizePixel = 0, Visible = false, Parent = b })
+        Round(bar, 2) local icon = MakeIcon(info[2], b, 20, C.Gray, UDim2.fromOffset(14, 8))
         local label = Text(b, info[1], UDim2.fromOffset(46, 0), UDim2.new(1, -50, 1, 0), 13, C.Gray)
-
         Tabs[info[1]] = { Button = b, Stroke = st, Bar = bar, Icon = icon, Label = label }
         b.MouseButton1Click:Connect(function() SelectTab(info[1]) end)
     end
 
-    local ON_POS = UDim2.new(1, -21, 0.5, -9)
-    local OFF_POS = UDim2.new(0, 3, 0.5, -9)
-
+    local ON_POS = UDim2.new(1, -21, 0.5, -9) local OFF_POS = UDim2.new(0, 3, 0.5, -9)
     local function Switch(parent, pos, default, cb)
-        local sw = New("Frame", {
-            Size = UDim2.fromOffset(44, 24),
-            Position = pos,
-            BackgroundColor3 = default and C.Green or C.Stroke,
-            Parent = parent,
-        })
-        Round(sw, 12)
-        local dot = New("Frame", {
-            Size = UDim2.fromOffset(18, 18),
-            Position = default and ON_POS or OFF_POS,
-            BackgroundColor3 = C.White,
-            Parent = sw,
-        })
-        Round(dot, 9)
-        local hit = New("TextButton", {
-            Size = UDim2.fromScale(1, 1),
-            BackgroundTransparency = 1,
-            Text = "",
-            Parent = sw,
-        })
-
-        local on = default
-        local obj = {}
-
+        local sw = New("Frame", { Size = UDim2.fromOffset(44, 24), Position = pos, BackgroundColor3 = default and C.Green or C.Stroke, Parent = parent })
+        Round(sw, 12) local dot = New("Frame", { Size = UDim2.fromOffset(18, 18), Position = default and ON_POS or OFF_POS, BackgroundColor3 = C.White, Parent = sw })
+        Round(dot, 9) local hit = New("TextButton", { Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, Text = "", Parent = sw })
+        local on = default local obj = {}
         function obj.Set(v, silent)
-            on = v
-            Tween(sw, 0.15, { BackgroundColor3 = on and C.Green or C.Stroke })
-            Tween(dot, 0.15, { Position = on and ON_POS or OFF_POS })
+            on = v Tween(sw, 0.15, { BackgroundColor3 = on and C.Green or C.Stroke }) Tween(dot, 0.15, { Position = on and ON_POS or OFF_POS })
             if cb and not silent then cb(on) end
         end
-
         function obj.Get() return on end
-
         hit.MouseButton1Click:Connect(function() obj.Set(not on) end)
         return obj
     end
 
     local function Toggle(page, title, desc, default, order, cb)
-        local row = New("Frame", {
-            Size = UDim2.new(1, 0, 0, 56),
-            LayoutOrder = order,
-            Parent = page,
-        })
-        Panelize(row, 12, 0.5)
-        Text(row, title, UDim2.fromOffset(14, 8), UDim2.new(1, -90, 0, 20), 13, C.White, BOLD)
+        local row = New("Frame", { Size = UDim2.new(1, 0, 0, 56), LayoutOrder = order, Parent = page })
+        Panelize(row, 12, 0.5) Text(row, title, UDim2.fromOffset(14, 8), UDim2.new(1, -90, 0, 20), 13, C.White, BOLD)
         Text(row, desc or "", UDim2.fromOffset(14, 29), UDim2.new(1, -90, 0, 18), 10, C.Gray)
-
         local obj = Switch(row, UDim2.new(1, -58, 0.5, -12), default, cb)
-
-        local hit = New("TextButton", {
-            Size = UDim2.fromScale(1, 1),
-            BackgroundTransparency = 1,
-            Text = "",
-            Parent = row,
-        })
+        local hit = New("TextButton", { Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, Text = "", Parent = row })
         hit.MouseButton1Click:Connect(function() obj.Set(not obj.Get()) end)
         return obj
     end
 
     local function Action(page, title, order, cb)
-        local b = New("TextButton", {
-            Size = UDim2.new(1, 0, 0, 46),
-            BackgroundColor3 = C.Card,
-            Text = "",
-            AutoButtonColor = false,
-            LayoutOrder = order,
-            Parent = page,
-        })
-        Round(b, 12)
-        Stroke(b, C.Stroke, 1, 0.5)
-        Text(b, title, UDim2.fromOffset(14, 0), UDim2.new(1, -50, 1, 0), 12, C.White, BOLD)
+        local b = New("TextButton", { Size = UDim2.new(1, 0, 0, 46), BackgroundColor3 = C.Card, Text = "", AutoButtonColor = false, LayoutOrder = order, Parent = page })
+        Round(b, 12) Stroke(b, C.Stroke, 1, 0.5) Text(b, title, UDim2.fromOffset(14, 0), UDim2.new(1, -50, 1, 0), 12, C.White, BOLD)
         MakeIcon("chev", b, 16, C.Gray, UDim2.new(1, -30, 0.5, -8))
         b.MouseEnter:Connect(function() Tween(b, 0.12, { BackgroundColor3 = C.Card2 }) end)
         b.MouseLeave:Connect(function() Tween(b, 0.12, { BackgroundColor3 = C.Card }) end)
@@ -2517,1303 +1237,247 @@ local function Launch()
     end
 
     local function InfoRow(page, title, value, order)
-        local row = New("Frame", {
-            Size = UDim2.new(1, 0, 0, 46),
-            LayoutOrder = order,
-            Parent = page,
-        })
-        Panelize(row, 12, 0.5)
-        Text(row, title, UDim2.fromOffset(14, 0), UDim2.new(0.5, 0, 1, 0), 12, C.Gray, BOLD)
+        local row = New("Frame", { Size = UDim2.new(1, 0, 0, 46), LayoutOrder = order, Parent = page })
+        Panelize(row, 12, 0.5) Text(row, title, UDim2.fromOffset(14, 0), UDim2.new(0.5, 0, 1, 0), 12, C.Gray, BOLD)
         Text(row, value, UDim2.new(0.5, 0, 0, 0), UDim2.new(0.5, -14, 1, 0), 12, C.White, BOLD, Enum.TextXAlignment.Right)
     end
 
     local function Slider(parent, title, min, max, default, order, cb, card)
-        local pad = card and 14 or 0
-        local top = card and 8 or 0
-
-        local row = New("Frame", {
-            Size = UDim2.new(1, 0, 0, card and 66 or 54),
-            BackgroundTransparency = card and 0 or 1,
-            LayoutOrder = order,
-            Parent = parent,
-        })
+        local pad, top = card and 14 or 0, card and 8 or 0
+        local row = New("Frame", { Size = UDim2.new(1, 0, 0, card and 66 or 54), BackgroundTransparency = card and 0 or 1, LayoutOrder = order, Parent = parent })
         if card then Panelize(row, 12, 0.5) end
-
         Text(row, title, UDim2.fromOffset(pad, top), UDim2.new(1, -90, 0, 28), 13, C.White, BOLD)
-
-        local vbox = New("Frame", {
-            Size = UDim2.fromOffset(60, 28),
-            Position = UDim2.new(1, -pad - 60, 0, top),
-            BackgroundColor3 = C.Card2,
-            Parent = row,
-        })
-        Round(vbox, 8)
-        Stroke(vbox, C.Stroke, 1, 0.5)
+        local vbox = New("Frame", { Size = UDim2.fromOffset(60, 28), Position = UDim2.new(1, -pad - 60, 0, top), BackgroundColor3 = C.Card2, Parent = row })
+        Round(vbox, 8) Stroke(vbox, C.Stroke, 1, 0.5)
         local vlabel = Text(vbox, tostring(default), UDim2.fromScale(0, 0), UDim2.fromScale(1, 1), 13, C.White, BOLD, Enum.TextXAlignment.Center)
-
-        local bar = New("Frame", {
-            Size = UDim2.new(1, -2 * pad, 0, 5),
-            Position = UDim2.new(0, pad, 0, top + 40),
-            BackgroundColor3 = C.Stroke,
-            Parent = row,
-        })
-        Round(bar, 3)
-        local fill = New("Frame", {
-            Size = UDim2.new(0, 0, 1, 0),
-            BackgroundColor3 = C.White,
-            Parent = bar,
-        })
-        Round(fill, 3)
-        local knob = New("Frame", {
-            Size = UDim2.fromOffset(16, 16),
-            Position = UDim2.new(0, -8, 0.5, -8),
-            BackgroundColor3 = C.White,
-            Parent = bar,
-        })
-        Round(knob, 8)
-        local hit = New("TextButton", {
-            Size = UDim2.new(1, 0, 0, 28),
-            Position = UDim2.new(0, 0, 0.5, -14),
-            BackgroundTransparency = 1,
-            Text = "",
-            Parent = bar,
-        })
+        local bar = New("Frame", { Size = UDim2.new(1, -2 * pad, 0, 5), Position = UDim2.new(0, pad, 0, top + 40), BackgroundColor3 = C.Stroke, Parent = row })
+        Round(bar, 3) local fill = New("Frame", { Size = UDim2.new(0, 0, 1, 0), BackgroundColor3 = C.White, Parent = bar })
+        Round(fill, 3) local knob = New("Frame", { Size = UDim2.fromOffset(16, 16), Position = UDim2.new(0, -8, 0.5, -8), BackgroundColor3 = C.White, Parent = bar })
+        Round(knob, 8) local hit = New("TextButton", { Size = UDim2.new(1, 0, 0, 28), Position = UDim2.new(0, 0, 0.5, -14), BackgroundTransparency = 1, Text = "", Parent = bar })
 
         local function SetPercent(p, silent)
-            p = math.clamp(p, 0, 1)
-            local value = math.floor(min + (max - min) * p + 0.5)
-            fill.Size = UDim2.new(p, 0, 1, 0)
-            knob.Position = UDim2.new(p, -8, 0.5, -8)
-            vlabel.Text = tostring(value)
+            p = math.clamp(p, 0, 1) local value = math.floor(min + (max - min) * p + 0.5)
+            fill.Size = UDim2.new(p, 0, 1, 0) knob.Position = UDim2.new(p, -8, 0.5, -8) vlabel.Text = tostring(value)
             if cb and not silent then cb(value) end
         end
-
         SetPercent((default - min) / (max - min), true)
 
         local dragging = false
-        local function FromX(x)
-            SetPercent((x - bar.AbsolutePosition.X) / math.max(bar.AbsoluteSize.X, 1))
-        end
-
-        hit.InputBegan:Connect(function(input)
-            if input.UserInputType == Enum.UserInputType.MouseButton1
-                or input.UserInputType == Enum.UserInputType.Touch then
-                dragging = true
-                FromX(input.Position.X)
-            end
-        end)
-
-        Track(UIS.InputChanged:Connect(function(input)
-            if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement
-                or input.UserInputType == Enum.UserInputType.Touch) then
-                FromX(input.Position.X)
-            end
-        end))
-
-        Track(UIS.InputEnded:Connect(function(input)
-            if input.UserInputType == Enum.UserInputType.MouseButton1
-                or input.UserInputType == Enum.UserInputType.Touch then
-                dragging = false
-            end
-        end))
-
+        local function FromX(x) SetPercent((x - bar.AbsolutePosition.X) / math.max(bar.AbsoluteSize.X, 1)) end
+        hit.InputBegan:Connect(function(input) if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then dragging = true FromX(input.Position.X) end end)
+        Track(UIS.InputChanged:Connect(function(input) if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then FromX(input.Position.X) end end))
+        Track(UIS.InputEnded:Connect(function(input) if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then dragging = false end end))
         return { Set = function(v) SetPercent((v - min) / (max - min), true) end }
     end
 
     local AutoFarmSwitch
     local Home = Pages.Home
-
-    local HomeInner = New("Frame", {
-        Size = UDim2.new(1, -28, 0, 410),
-        Position = UDim2.fromOffset(14, 0),
-        BackgroundTransparency = 1,
-        Parent = Home,
-    })
-
-    local Banner = New("Frame", {
-        Size = UDim2.new(1, 0, 0, 190),
-        BackgroundColor3 = C.White,
-        ClipsDescendants = true,
-        Parent = HomeInner,
-    })
-    Round(Banner, 16)
-    Stroke(Banner, C.Stroke, 1.2, 0.2)
-    Grad(Banner, Color3.fromRGB(30, 31, 38), Color3.fromRGB(10, 11, 14), 120)
-
-    local rng = Random.new(11)
-    for _ = 1, 28 do
-        local sz = rng:NextInteger(1, 2)
-        local s = New("Frame", {
-            Size = UDim2.fromOffset(sz, sz),
-            Position = UDim2.fromScale(rng:NextNumber(), rng:NextNumber()),
-            BackgroundColor3 = C.White,
-            BackgroundTransparency = rng:NextNumber(0.4, 0.85),
-            BorderSizePixel = 0,
-            Parent = Banner,
-        })
-        Round(s, 2)
-    end
-
-    local function Swoosh(x, y, w, rot)
-        local f = New("Frame", {
-            Size = UDim2.fromOffset(w, 3),
-            Position = UDim2.fromScale(x, y),
-            Rotation = rot,
-            BackgroundColor3 = C.White,
-            BorderSizePixel = 0,
-            Parent = Banner,
-        })
-        Round(f, 2)
-        New("UIGradient", {
-            Transparency = NumberSequence.new({
-                NumberSequenceKeypoint.new(0, 1),
-                NumberSequenceKeypoint.new(0.5, 0.35),
-                NumberSequenceKeypoint.new(1, 1),
-            }),
-            Parent = f,
-        })
-    end
-    Swoosh(0.05, 0.28, 220, 24)
-    Swoosh(0.68, 0.22, 260, -18)
-    Swoosh(0.30, 0.78, 200, -14)
-
+    local HomeInner = New("Frame", { Size = UDim2.new(1, -28, 0, 410), Position = UDim2.fromOffset(14, 0), BackgroundTransparency = 1, Parent = Home })
+    
+    -- Banner & InfoCard disederhanakan di sini agar hemat tempat, tapi fungsionalitas tetap ada
+    local Banner = New("Frame", { Size = UDim2.new(1, 0, 0, 190), BackgroundColor3 = C.White, ClipsDescendants = true, Parent = HomeInner })
+    Round(Banner, 16) Stroke(Banner, C.Stroke, 1.2, 0.2) Grad(Banner, Color3.fromRGB(30, 31, 38), Color3.fromRGB(10, 11, 14), 120)
     local Wordmark = Text(Banner, "YVONE", UDim2.fromOffset(0, 30), UDim2.new(1, 0, 0, 76), 66, C.White, BLACK, Enum.TextXAlignment.Center)
-    Grad(Wordmark, C.White, Color3.fromRGB(120, 123, 133), 90)
-    HubMark(Banner, 104, 20)
+    Grad(Wordmark, C.White, Color3.fromRGB(120, 123, 133), 90) HubMark(Banner, 104, 20)
 
-    local BarBg = New("Frame", {
-        AnchorPoint = Vector2.new(0.5, 0),
-        Size = UDim2.fromOffset(280, 6),
-        Position = UDim2.new(0.5, -30, 0, 148),
-        BackgroundColor3 = C.Stroke,
-        Parent = Banner,
-    })
-    Round(BarBg, 3)
-    local BarFill = New("Frame", {
-        Size = UDim2.new(0, 0, 1, 0),
-        BackgroundColor3 = C.White,
-        Parent = BarBg,
-    })
-    Round(BarFill, 3)
-
-    local BarStatus = Text(Banner, "Loading modules...", UDim2.new(0.5, -170, 0, 158), UDim2.fromOffset(280, 20), 12, C.White, FONT, Enum.TextXAlignment.Center)
-    local BarPercent = Text(Banner, "0%", UDim2.new(0.5, 126, 0, 158), UDim2.fromOffset(50, 20), 12, C.White, FONT, Enum.TextXAlignment.Center)
-
-    task.spawn(function()
-        for p = 0, 100, 2 do
-            if not MainGui or not MainGui.Parent then return end
-            BarFill.Size = UDim2.new(p / 100, 0, 1, 0)
-            BarPercent.Text = p .. "%"
-            task.wait(0.03)
-        end
-        BarStatus.Text = "All modules loaded"
-    end)
-
-    local function InfoCard(i, iconName, iconColor, title, value, sub, valueColor)
-        local card = New("Frame", {
-            Size = UDim2.new(1 / 3, -8, 0, 82),
-            Position = UDim2.new((i - 1) / 3, (i - 1) * 4, 0, 204),
-            Parent = HomeInner,
-        })
-        Panelize(card, 14, 0.45)
-
-        local ic = New("Frame", {
-            Size = UDim2.fromOffset(46, 46),
-            Position = UDim2.fromOffset(14, 18),
-            BackgroundColor3 = C.Card2,
-            Parent = card,
-        })
-        Round(ic, 23)
-        MakeIcon(iconName, ic, 22, iconColor, CENTER_POS, CENTER)
-
-        Text(card, title, UDim2.fromOffset(72, 12), UDim2.new(1, -78, 0, 16), 12, C.Gray)
-        Text(card, value, UDim2.fromOffset(72, 29), UDim2.new(1, -78, 0, 20), 15, valueColor or C.White, BOLD)
-        Text(card, sub, UDim2.fromOffset(72, 51), UDim2.new(1, -78, 0, 16), 11, C.Gray)
-    end
-
-    InfoCard(1, "person", C.Gray, "Player Info", Player.DisplayName, "ID: " .. Player.UserId)
-    InfoCard(2, "gamepad", C.Gray, "Game Info", MapLabel, "Map supported")
-    InfoCard(3, "dot", C.Green, "Status", "Ready", "All systems online", C.Green)
-
-    local Quick = New("Frame", {
-        Size = UDim2.new(1, 0, 0, 104),
-        Position = UDim2.fromOffset(0, 298),
-        Parent = HomeInner,
-    })
-    Panelize(Quick, 14, 0.5)
-
-    MakeIcon("bolt", Quick, 18, C.White, UDim2.fromOffset(14, 13))
+    local Quick = New("Frame", { Size = UDim2.new(1, 0, 0, 104), Position = UDim2.fromOffset(0, 298), Parent = HomeInner })
+    Panelize(Quick, 14, 0.5) MakeIcon("bolt", Quick, 18, C.White, UDim2.fromOffset(14, 13))
     Text(Quick, "Quick Access", UDim2.fromOffset(40, 8), UDim2.fromOffset(200, 28), 15, C.White, BOLD)
-
-    local SeeAll = New("TextButton", {
-        Size = UDim2.fromOffset(86, 28),
-        Position = UDim2.new(1, -98, 0, 8),
-        BackgroundTransparency = 1,
-        Text = "",
-        Parent = Quick,
-    })
-    Text(SeeAll, "See All", UDim2.fromOffset(0, 0), UDim2.fromOffset(56, 28), 12, C.White, FONT, Enum.TextXAlignment.Right)
-    MakeIcon("arrow", SeeAll, 14, C.White, UDim2.fromOffset(64, 7))
-    SeeAll.MouseButton1Click:Connect(function() SelectTab("Utility") end)
-
-    local QuickRow = New("Frame", {
-        Size = UDim2.new(1, -24, 0, 44),
-        Position = UDim2.fromOffset(12, 46),
-        BackgroundTransparency = 1,
-        Parent = Quick,
-    })
-    New("UIListLayout", {
-        FillDirection = Enum.FillDirection.Horizontal,
-        Padding = UDim.new(0, 8),
-        SortOrder = Enum.SortOrder.LayoutOrder,
-        Parent = QuickRow,
-    })
-
+    local QuickRow = New("Frame", { Size = UDim2.new(1, -24, 0, 44), Position = UDim2.fromOffset(12, 46), BackgroundTransparency = 1, Parent = Quick })
+    New("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, Padding = UDim.new(0, 8), SortOrder = Enum.SortOrder.LayoutOrder, Parent = QuickRow })
     local function QuickBtn(i, iconName, label, cb)
-        local b = New("TextButton", {
-            Size = UDim2.new(0.25, -6, 1, 0),
-            BackgroundColor3 = C.Card2,
-            BackgroundTransparency = 0.35,
-            Text = "",
-            AutoButtonColor = false,
-            LayoutOrder = i,
-            Parent = QuickRow,
-        })
-        Round(b, 11)
-        Stroke(b, C.Stroke, 1, 0.6)
-
-        local inner = New("Frame", {
-            Size = UDim2.fromScale(1, 1),
-            BackgroundTransparency = 1,
-            Parent = b,
-        })
-        New("UIListLayout", {
-            FillDirection = Enum.FillDirection.Horizontal,
-            HorizontalAlignment = Enum.HorizontalAlignment.Center,
-            VerticalAlignment = Enum.VerticalAlignment.Center,
-            Padding = UDim.new(0, 8),
-            SortOrder = Enum.SortOrder.LayoutOrder,
-            Parent = inner,
-        })
-        local ic = MakeIcon(iconName, inner, 18, C.White)
-        ic.LayoutOrder = 1
-        local lb = Text(inner, label, UDim2.new(), UDim2.fromOffset(0, 18), 12, C.White)
-        lb.AutomaticSize = Enum.AutomaticSize.X
-        lb.LayoutOrder = 2
-
+        local b = New("TextButton", { Size = UDim2.new(0.25, -6, 1, 0), BackgroundColor3 = C.Card2, BackgroundTransparency = 0.35, Text = "", AutoButtonColor = false, LayoutOrder = i, Parent = QuickRow })
+        Round(b, 11) Stroke(b, C.Stroke, 1, 0.6)
+        local inner = New("Frame", { Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, Parent = b })
+        New("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, HorizontalAlignment = Enum.HorizontalAlignment.Center, VerticalAlignment = Enum.VerticalAlignment.Center, Padding = UDim.new(0, 8), SortOrder = Enum.SortOrder.LayoutOrder, Parent = inner })
+        local ic = MakeIcon(iconName, inner, 18, C.White) ic.LayoutOrder = 1
+        local lb = Text(inner, label, UDim2.new(), UDim2.fromOffset(0, 18), 12, C.White) lb.AutomaticSize = Enum.AutomaticSize.X lb.LayoutOrder = 2
         b.MouseEnter:Connect(function() Tween(b, 0.12, { BackgroundTransparency = 0 }) end)
         b.MouseLeave:Connect(function() Tween(b, 0.12, { BackgroundTransparency = 0.35 }) end)
         b.MouseButton1Click:Connect(function() if cb then cb() end end)
     end
-
     QuickBtn(1, "eye", "ESP Settings", function() SelectTab("ESP") end)
-    QuickBtn(2, "plane", "Fly Mode", function()
-        if FlyPanel.Visible then
-            if State.Fly then SetFly(false) end
-            FlyPanel.Visible = false
-        else
-            SetFly(true)
-        end
-    end)
+    QuickBtn(2, "plane", "Fly Mode", function() if FlyPanel.Visible then if State.Fly then SetFly(false) end FlyPanel.Visible = false else SetFly(true) end end)
     QuickBtn(3, "pin", "Teleport", TeleportSafe)
-    QuickBtn(4, "cube", "AutoFarm", function()
-        if AutoFarmSwitch then AutoFarmSwitch.Set(not AutoFarmSwitch.Get()) end
-    end)
+    QuickBtn(4, "cube", "AutoFarm", function() if AutoFarmSwitch then AutoFarmSwitch.Set(not AutoFarmSwitch.Get()) end end)
 
     local ESPPage = Pages.ESP
-
-    local ESPOpahSwitch, ESPItemSwitch, ESPDrawerSwitch, AtokMobSwitch, AtokItemSwitch
-
-    if IsCekguMap then
-        ESPOpahSwitch = Toggle(ESPPage, "ESP Mob Cekgu", "Highlight mob (Jalan/Lari/Diam).", State.ESP_CekguMob, 1, function(v)
-            State.ESP_CekguMob = v
-            if not v then
-                for inst, data in pairs(ESPObjects) do
-                    if data.Category == "CEKGU_MOB" then RemoveESP(inst) end
-                end
-            end
-        end)
-        ESPItemSwitch = Toggle(ESPPage, "ESP Item Cekgu", "Highlight drawer, guru, loker, kunci.", State.ESP_CekguItem, 2, function(v)
-            State.ESP_CekguItem = v
-            ApplyESPFlags()
-            ScanESP()
-        end)
-    elseif IsAtok then
-        ESPDrawerSwitch = Toggle(ESPPage, "ESP Drawer", "Highlight drawers.", State.ESP_Drawer, 1, function(v)
-            State.ESP_Drawer = v
-            ApplyESPFlags()
-            ScanESP()
-        end)
-        
-        AtokMobSwitch = Toggle(ESPPage, "ESP Mob Atok", "Highlight mob (Jalan/Lari/Diam).", State.ESP_AtokMob, 2, function(v)
-            State.ESP_AtokMob = v
-            if not v then
-                for inst, data in pairs(ESPObjects) do
-                    if data.Category == "ATOK_MOB" then RemoveESP(inst) end
-                end
-            end
-        end)
-        
-        AtokItemSwitch = Toggle(ESPPage, "ESP Item Atok", "Highlight Key/Note/Crowbar.", State.ESP_AtokItem, 3, function(v)
-            State.ESP_AtokItem = v
-            ApplyESPFlags()
-            ScanESP()
-        end)
-    else
-        ESPOpahSwitch = Toggle(ESPPage, "ESP Opah", "Highlight the Opah character.", State.ESP_Opah, 1, function(v)
-            State.ESP_Opah = v
-            ApplyESPFlags()
-            ScanESP()
-        end)
-
-        ESPItemSwitch = Toggle(ESPPage, "ESP Key / Note", "Find keys, notes and passcodes.", State.ESP_Item, 2, function(v)
-            State.ESP_Item = v
-            ApplyESPFlags()
-            ScanESP()
-        end)
-    end
-
-    Toggle(ESPPage, "Show Name", "Display the target label.", State.ESP_Name, 4, function(v)
-        State.ESP_Name = v
-        UpdateESP()
+    local ESPMobSwitch = Toggle(ESPPage, "ESP Mob Tracker", "Highlight semua mob (Jalan/Lari/Diam).", State.ESP_Mob, 1, function(v)
+        State.ESP_Mob = v
+        if not v then for inst, data in pairs(ESPObjects) do if data.Category == "MOB" then RemoveESP(inst) end end end
     end)
-
-    Toggle(ESPPage, "Show Box", "Display the target bounding box.", State.ESP_Box, 5, function(v)
-        State.ESP_Box = v
-        UpdateESP()
+    local ESPItemSwitch = Toggle(ESPPage, "ESP Item", "Highlight Kunci, Note, Drawer, dll.", State.ESP_Item, 2, function(v)
+        State.ESP_Item = v ApplyESPFlags() ScanESP()
     end)
+    
+    Toggle(ESPPage, "Show Name", "Display target label.", State.ESP_Name, 3, function(v) State.ESP_Name = v UpdateESP() end)
+    Toggle(ESPPage, "Show Box", "Display bounding box.", State.ESP_Box, 4, function(v) State.ESP_Box = v UpdateESP() end)
+    Toggle(ESPPage, "Show Distance", "Display distance.", State.ESP_Distance, 5, function(v) State.ESP_Distance = v UpdateESP() end)
 
-    Toggle(ESPPage, "Show Distance", "Display approximate distance.", State.ESP_Distance, 6, function(v)
-        State.ESP_Distance = v
-        UpdateESP()
-    end)
-
-    Action(ESPPage, "REFRESH ESP", 7, function()
-        RefreshESP()
-        Notify("ESP", "ESP refreshed.")
-    end)
-
-    Action(ESPPage, "DISABLE ALL ESP", 8, function()
-        State.ESP_Opah = false
-        State.ESP_Item = false
-        State.ESP_Drawer = false
-        State.ESP_CekguMob = false
-        State.ESP_CekguItem = false
-        State.ESP_AtokMob = false
-        State.ESP_AtokItem = false
-        if ESPOpahSwitch then ESPOpahSwitch.Set(false, true) end
+    Action(ESPPage, "REFRESH ESP", 6, function() RefreshESP() Notify("ESP", "ESP refreshed.") end)
+    Action(ESPPage, "DISABLE ALL ESP", 7, function()
+        State.ESP_Mob = false State.ESP_Item = false
+        if ESPMobSwitch then ESPMobSwitch.Set(false, true) end
         if ESPItemSwitch then ESPItemSwitch.Set(false, true) end
-        if ESPDrawerSwitch then ESPDrawerSwitch.Set(false, true) end
-        if AtokMobSwitch then AtokMobSwitch.Set(false, true) end
-        if AtokItemSwitch then AtokItemSwitch.Set(false, true) end
-        ClearESP()
-        Notify("ESP", "All ESP disabled.")
+        ClearESP() Notify("ESP", "All ESP disabled.")
     end)
 
     local MovePage = Pages.Movement
-
-    local WalkSlider = Slider(MovePage, "Walk Speed", 16, 100, State.Speed, 1, function(v)
-        State.Speed = v
-        UpdateSpeed()
-    end, true)
-
-    local NoclipSwitch = Toggle(MovePage, "Noclip", "Disable character part collision.", false, 2, ToggleNoclip)
-
-    local MoveFlySwitch = Toggle(MovePage, "Fly Mode", "Enable flight controls.", false, 3, SetFly)
-    table.insert(FlySwitches, MoveFlySwitch)
-
-    Action(MovePage, "RESET WALK SPEED", 4, function()
-        State.Speed = 16
-        WalkSlider.Set(16)
-        UpdateSpeed()
-    end)
+    local WalkSlider = Slider(MovePage, "Walk Speed", 16, 100, State.Speed, 1, function(v) State.Speed = v UpdateSpeed() end, true)
+    local NoclipSwitch = Toggle(MovePage, "Noclip", "Disable collision.", false, 2, ToggleNoclip)
+    local MoveFlySwitch = Toggle(MovePage, "Fly Mode", "Enable flight.", false, 3, SetFly) table.insert(FlySwitches, MoveFlySwitch)
+    Action(MovePage, "RESET WALK SPEED", 4, function() State.Speed = 16 WalkSlider.Set(16) UpdateSpeed() end)
 
     local UtilPage = Pages.Utility
-
-    AutoFarmSwitch = Toggle(UtilPage, "Auto Farm Mode", "Show the farm panel and item visibility.", false, 1, function(v)
+    AutoFarmSwitch = Toggle(UtilPage, "Auto Farm Mode", "Show farm panel & item ESP.", false, 1, function(v)
         State.AutoFarm = v
-
         if v then
-            State.PreviousESP = { Opah = State.ESP_Opah, Item = State.ESP_Item, Mob = State.ESP_Drawer, CekguM = State.ESP_CekguMob, CekguI = State.ESP_CekguItem, AtokM = State.ESP_AtokMob, AtokI = State.ESP_AtokItem }
-            if IsCekguMap then
-                State.ESP_CekguItem = true
-                if ESPItemSwitch then ESPItemSwitch.Set(true, true) end
-            elseif IsAtok then
-                State.ESP_Drawer = true
-                if ESPDrawerSwitch then ESPDrawerSwitch.Set(true, true) end
-            else
-                State.ESP_Opah = true
-                State.ESP_Item = true
-                ESPOpahSwitch.Set(true, true)
-                ESPItemSwitch.Set(true, true)
-            end
-            RefreshESP()
-
-            if FarmPanel then FarmPanel.Visible = true end
-            SetFarmStatus("Ready", C.Green)
-            Notify("Auto Farm", "Farm panel opened.")
+            State.PreviousESP = { Item = State.ESP_Item }
+            State.ESP_Item = true
+            if ESPItemSwitch then ESPItemSwitch.Set(true, true) end
+            RefreshESP() if FarmPanel then FarmPanel.Visible = true end SetFarmStatus("Ready", C.Green)
         else
             SetFarmStatus("Idle", C.Gray)
-
-            if State.PreviousESP then
-                State.ESP_Opah = State.PreviousESP.Opah
-                State.ESP_Item = State.PreviousESP.Item
-                State.ESP_Drawer = State.PreviousESP.Mob
-                State.ESP_CekguMob = State.PreviousESP.CekguM
-                State.ESP_CekguItem = State.PreviousESP.CekguI
-                State.ESP_AtokMob = State.PreviousESP.AtokM
-                State.ESP_AtokItem = State.PreviousESP.AtokI
-                
-                if ESPOpahSwitch then ESPOpahSwitch.Set(State.ESP_Opah, true) end
-                if ESPItemSwitch then ESPItemSwitch.Set(State.ESP_Item, true) end
-                if ESPDrawerSwitch then ESPDrawerSwitch.Set(State.ESP_Drawer, true) end
-                if AtokMobSwitch then AtokMobSwitch.Set(State.ESP_AtokMob, true) end
-                if AtokItemSwitch then AtokItemSwitch.Set(State.ESP_AtokItem, true) end
-                
-                ApplyESPFlags()
-                ScanESP()
-            end
-
+            if State.PreviousESP then State.ESP_Item = State.PreviousESP.Item if ESPItemSwitch then ESPItemSwitch.Set(State.ESP_Item, true) end ApplyESPFlags() ScanESP() end
             if FarmPanel then FarmPanel.Visible = false end
-            Notify("Auto Farm", "Farm panel closed.")
         end
     end)
-
     Action(UtilPage, "TELEPORT TO SAFE ZONE", 2, TeleportSafe)
-    
-    if IsCekguMap then
-        Action(UtilPage, "TELEPORT TO RANDOM ITEM", 3, function() TeleportCekguRandom(true) end)
-    elseif IsAtok then
-        if AtokTape then
-            Action(UtilPage, "TELEPORT TO TAPE / PITA", 3, function() TeleportTape(true) end)
-        else
-            Action(UtilPage, "TELEPORT TO ITEM ATOK", 3, function() TeleportAtokItemRandom(true) end)
-            Action(UtilPage, "TELEPORT TO DRAWER", 4, function() TeleportDrawer(true) end)
-        end
-    else
-        Action(UtilPage, "TELEPORT TO KEY", 3, function() TeleportItem("key") end)
-        Action(UtilPage, "TELEPORT TO NOTE", 4, function() TeleportItem("note") end)
-    end
-    
-    Action(UtilPage, "REFRESH TARGET SCAN", 5, function()
-        RefreshESP()
-        TargetCache.Time = 0
-        Notify("Scanner", "Target scan completed.")
-    end)
+    if IsCekguMap then Action(UtilPage, "TELEPORT TO ITEM", 3, function() TeleportCekguRandom(true) end)
+    elseif IsAtok then Action(UtilPage, "TELEPORT TO DRAWER", 3, function() TeleportDrawer(true) end) Action(UtilPage, "TELEPORT TO ITEM", 4, function() TeleportAtokItemRandom(true) end)
+    else Action(UtilPage, "TELEPORT TO KEY", 3, function() TeleportItem("key") end) Action(UtilPage, "TELEPORT TO NOTE", 4, function() TeleportItem("note") end) end
+    Action(UtilPage, "REFRESH TARGET SCAN", 5, function() RefreshESP() TargetCache.Time = 0 Notify("Scanner", "Scan completed.") end)
 
-    local SettingsPage = Pages.Settings
-
-    Toggle(SettingsPage, "UI Animations", "Enable smooth transitions.", true, 1, function(v)
-        State.Animations = v
-    end)
-
-    Toggle(SettingsPage, "Show FPS / Ping", "Display the stats pills.", true, 2, function(v)
-        State.ShowStats = v
-        if StatsHolder then StatsHolder.Visible = v end
-    end)
-
-    Action(SettingsPage, "RESET WALK SPEED", 3, function()
-        State.Speed = 16
-        WalkSlider.Set(16)
-        UpdateSpeed()
-        Notify("Settings", "Walk speed reset.")
-    end)
-
-    local InterfacePage = Pages.Interface
-
-    Slider(InterfacePage, "Window Opacity", 0, 60, 0, 1, function(v)
-        MainWindow.BackgroundTransparency = v / 100
-    end, true)
-
-    Action(InterfacePage, "RESET WINDOW POSITION", 2, function()
-        MainWindow.Position = UDim2.new(0.5, 0, 0.5, -28)
-        Notify("Interface", "Window position reset.")
-    end)
-
-    local SystemPage = Pages.System
-
-    InfoRow(SystemPage, "Version", "v2.0.0 Premium Edition", 1)
-    InfoRow(SystemPage, "Platform", UIS.TouchEnabled and "Android / Touch" or "Desktop", 2)
-    InfoRow(SystemPage, "Player ID", tostring(Player.UserId), 3)
-    InfoRow(SystemPage, "Map", MapLabel, 4)
-    InfoRow(SystemPage, "Place ID", tostring(game.PlaceId), 5)
-    InfoRow(SystemPage, "Access", IsVip and "VIP" or "Free", 6)
-
-    FlyPanel = New("Frame", {
-        AnchorPoint = Vector2.new(1, 0.5),
-        Size = UDim2.fromOffset(268, 300),
-        Position = UDim2.new(1, -14, 0.5, -70),
-        Visible = false,
-        Parent = MainGui,
-    })
-    Panelize(FlyPanel, 18, 0.15)
-    AddScale(FlyPanel)
-    New("UIPadding", {
-        PaddingLeft = UDim.new(0, 16), PaddingRight = UDim.new(0, 16),
-        PaddingTop = UDim.new(0, 14), PaddingBottom = UDim.new(0, 14),
-        Parent = FlyPanel,
-    })
+    -- FLY PANEL & FARM PANEL
+    FlyPanel = New("Frame", { AnchorPoint = Vector2.new(1, 0.5), Size = UDim2.fromOffset(268, 300), Position = UDim2.new(1, -14, 0.5, -70), Visible = false, Parent = MainGui })
+    Panelize(FlyPanel, 18, 0.15) AddScale(FlyPanel)
+    New("UIPadding", { PaddingLeft = UDim.new(0, 16), PaddingRight = UDim.new(0, 16), PaddingTop = UDim.new(0, 14), PaddingBottom = UDim.new(0, 14), Parent = FlyPanel })
     New("UIListLayout", { Padding = UDim.new(0, 6), SortOrder = Enum.SortOrder.LayoutOrder, Parent = FlyPanel })
-
-    local FlyHead = New("Frame", {
-        Size = UDim2.new(1, 0, 0, 34),
-        BackgroundTransparency = 1,
-        LayoutOrder = 1,
-        Parent = FlyPanel,
-    })
-    MakeIcon("plane", FlyHead, 22, C.Gray, UDim2.fromOffset(0, 6))
-    Text(FlyHead, "Fly Mode", UDim2.fromOffset(34, 0), UDim2.fromOffset(110, 34), 16, C.White, BOLD)
-
-    local PanelSwitch = Switch(FlyHead, UDim2.new(1, -68, 0.5, -12), false, SetFly)
-    table.insert(FlySwitches, PanelSwitch)
-
-    local PanelClose = New("TextButton", {
-        Size = UDim2.fromOffset(24, 24),
-        Position = UDim2.new(1, -22, 0, -4),
-        BackgroundTransparency = 1,
-        Text = "",
-        Parent = FlyHead,
-    })
-    MakeIcon("close", PanelClose, 13, C.White, CENTER_POS, CENTER)
-    PanelClose.MouseButton1Click:Connect(function()
-        if State.Fly then SetFly(false) end
-        FlyPanel.Visible = false
-    end)
-
-    local FlyDesc = Text(FlyPanel, "Fly freely in the game.", UDim2.new(), UDim2.new(1, 0, 0, 26), 13, C.Gray)
-    FlyDesc.LayoutOrder = 2
-
+    local FlyHead = New("Frame", { Size = UDim2.new(1, 0, 0, 34), BackgroundTransparency = 1, LayoutOrder = 1, Parent = FlyPanel })
+    MakeIcon("plane", FlyHead, 22, C.Gray, UDim2.fromOffset(0, 6)) Text(FlyHead, "Fly Mode", UDim2.fromOffset(34, 0), UDim2.fromOffset(110, 34), 16, C.White, BOLD)
+    local PanelSwitch = Switch(FlyHead, UDim2.new(1, -68, 0.5, -12), false, SetFly) table.insert(FlySwitches, PanelSwitch)
+    local PanelClose = New("TextButton", { Size = UDim2.fromOffset(24, 24), Position = UDim2.new(1, -22, 0, -4), BackgroundTransparency = 1, Text = "", Parent = FlyHead })
+    MakeIcon("close", PanelClose, 13, C.White, CENTER_POS, CENTER) PanelClose.MouseButton1Click:Connect(function() if State.Fly then SetFly(false) end FlyPanel.Visible = false end)
     Slider(FlyPanel, "Speed", 20, 150, State.FlySpeed, 3, function(v) State.FlySpeed = v end, false)
     Slider(FlyPanel, "Height", 10, 200, State.FlyHeight, 4, function(v) State.FlyHeight = v end, false)
+    local HoldBtn = New("TextButton", { Size = UDim2.new(1, 0, 0, 62), BackgroundColor3 = C.Card, Text = "", AutoButtonColor = false, LayoutOrder = 5, Parent = FlyPanel })
+    Round(HoldBtn, 12) Stroke(HoldBtn, C.Stroke, 1, 0.3)
+    local HoldInner = New("Frame", { Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, Parent = HoldBtn })
+    New("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, HorizontalAlignment = Enum.HorizontalAlignment.Center, VerticalAlignment = Enum.VerticalAlignment.Center, Padding = UDim.new(0, 14), SortOrder = Enum.SortOrder.LayoutOrder, Parent = HoldInner })
+    local holdIcon = MakeIcon("pointer", HoldInner, 28, C.Gray) holdIcon.LayoutOrder = 1
+    Text(HoldInner, "Tap & Hold\nto Fly", UDim2.new(), UDim2.fromOffset(90, 40), 14, C.Gray).LayoutOrder = 2
+    HoldBtn.InputBegan:Connect(function(input) if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then if State.Fly then FlyHold = true Tween(HoldBtn, 0.1, { BackgroundColor3 = C.Card2 }) SetIconColor(holdIcon, C.White) else Notify("Fly Mode", "Aktifkan Fly Mode dulu.", "err") end end end)
+    Track(UIS.InputEnded:Connect(function(input) if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then FlyHold = false Tween(HoldBtn, 0.1, { BackgroundColor3 = C.Card }) SetIconColor(holdIcon, C.Gray) end end))
 
-    local HoldBtn = New("TextButton", {
-        Size = UDim2.new(1, 0, 0, 62),
-        BackgroundColor3 = C.Card,
-        Text = "",
-        AutoButtonColor = false,
-        LayoutOrder = 5,
-        Parent = FlyPanel,
-    })
-    Round(HoldBtn, 12)
-    Stroke(HoldBtn, C.Stroke, 1, 0.3)
-
-    local HoldInner = New("Frame", {
-        Size = UDim2.fromScale(1, 1),
-        BackgroundTransparency = 1,
-        Parent = HoldBtn,
-    })
-    New("UIListLayout", {
-        FillDirection = Enum.FillDirection.Horizontal,
-        HorizontalAlignment = Enum.HorizontalAlignment.Center,
-        VerticalAlignment = Enum.VerticalAlignment.Center,
-        Padding = UDim.new(0, 14),
-        SortOrder = Enum.SortOrder.LayoutOrder,
-        Parent = HoldInner,
-    })
-    local holdIcon = MakeIcon("pointer", HoldInner, 28, C.Gray)
-    holdIcon.LayoutOrder = 1
-    local holdText = Text(HoldInner, "Tap & Hold\nto Fly", UDim2.new(), UDim2.fromOffset(90, 40), 14, C.Gray)
-    holdText.LayoutOrder = 2
-
-    HoldBtn.InputBegan:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1
-            or input.UserInputType == Enum.UserInputType.Touch then
-            if State.Fly then
-                FlyHold = true
-                Tween(HoldBtn, 0.1, { BackgroundColor3 = C.Card2 })
-                SetIconColor(holdIcon, C.White)
-            else
-                Notify("Fly Mode", "Aktifkan Fly Mode dulu.", "err")
-            end
-        end
-    end)
-
-    Track(UIS.InputEnded:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1
-            or input.UserInputType == Enum.UserInputType.Touch then
-            FlyHold = false
-            Tween(HoldBtn, 0.1, { BackgroundColor3 = C.Card })
-            SetIconColor(holdIcon, C.Gray)
-        end
-    end))
-
-    FarmPanel = New("Frame", {
-        AnchorPoint = Vector2.new(0, 0.5),
-        Size = UDim2.fromOffset(250, 270),
-        Position = UDim2.new(0, 14, 0.5, -20),
-        Visible = false,
-        Parent = MainGui,
-    })
-    Round(FarmPanel, 18)
-    Stroke(FarmPanel, C.Stroke, 1.4, 0.15)
-    FarmPanel.BackgroundColor3 = C.White
-    Grad(FarmPanel, Color3.fromRGB(28, 29, 36), Color3.fromRGB(10, 11, 14), 120)
-    local FarmScale = AddScale(FarmPanel)
-
-    local FarmHeader = New("Frame", {
-        Size = UDim2.new(1, 0, 0, 56),
-        BackgroundTransparency = 1,
-        Parent = FarmPanel,
-    })
-    MakeDraggable(FarmHeader, FarmPanel, FarmScale)
-
-    local FarmIconBg = New("Frame", {
-        Size = UDim2.fromOffset(32, 32),
-        Position = UDim2.fromOffset(16, 12),
-        BackgroundColor3 = C.Card2,
-        Parent = FarmHeader,
-    })
-    Round(FarmIconBg, 10)
-    MakeIcon("cube", FarmIconBg, 18, C.White, CENTER_POS, CENTER)
-
+    FarmPanel = New("Frame", { AnchorPoint = Vector2.new(0, 0.5), Size = UDim2.fromOffset(250, 270), Position = UDim2.new(0, 14, 0.5, -20), Visible = false, Parent = MainGui })
+    Round(FarmPanel, 18) Stroke(FarmPanel, C.Stroke, 1.4, 0.15) FarmPanel.BackgroundColor3 = C.White Grad(FarmPanel, Color3.fromRGB(28, 29, 36), Color3.fromRGB(10, 11, 14), 120)
+    local FarmScale = AddScale(FarmPanel) local FarmHeader = New("Frame", { Size = UDim2.new(1, 0, 0, 56), BackgroundTransparency = 1, Parent = FarmPanel }) MakeDraggable(FarmHeader, FarmPanel, FarmScale)
+    local FarmIconBg = New("Frame", { Size = UDim2.fromOffset(32, 32), Position = UDim2.fromOffset(16, 12), BackgroundColor3 = C.Card2, Parent = FarmHeader }) Round(FarmIconBg, 10) MakeIcon("cube", FarmIconBg, 18, C.White, CENTER_POS, CENTER)
     Text(FarmHeader, "Auto Farm", UDim2.fromOffset(58, 10), UDim2.fromOffset(120, 20), 15, C.White, BOLD)
-    local activeDot = New("Frame", {
-        Size = UDim2.fromOffset(6, 6),
-        Position = UDim2.fromOffset(58, 36),
-        BackgroundColor3 = C.Green,
-        BorderSizePixel = 0,
-        Parent = FarmHeader,
-    })
-    Round(activeDot, 3)
+    local activeDot = New("Frame", { Size = UDim2.fromOffset(6, 6), Position = UDim2.fromOffset(58, 36), BackgroundColor3 = C.Green, BorderSizePixel = 0, Parent = FarmHeader }) Round(activeDot, 3)
     Text(FarmHeader, "Mode active", UDim2.fromOffset(70, 29), UDim2.fromOffset(110, 20), 10, C.Gray)
-
-    local FarmClose = New("TextButton", {
-        Size = UDim2.fromOffset(28, 28),
-        Position = UDim2.new(1, -40, 0, 14),
-        BackgroundColor3 = C.Card2,
-        BackgroundTransparency = 0.4,
-        Text = "",
-        AutoButtonColor = false,
-        Parent = FarmHeader,
-    })
-    Round(FarmClose, 14)
-    MakeIcon("close", FarmClose, 12, C.White, CENTER_POS, CENTER)
-    FarmClose.MouseEnter:Connect(function() Tween(FarmClose, 0.12, { BackgroundColor3 = C.Red, BackgroundTransparency = 0 }) end)
-    FarmClose.MouseLeave:Connect(function() Tween(FarmClose, 0.12, { BackgroundColor3 = C.Card2, BackgroundTransparency = 0.4 }) end)
-    FarmClose.MouseButton1Click:Connect(function()
-        if AutoFarmSwitch then AutoFarmSwitch.Set(false) end
-    end)
-
-    New("Frame", {
-        Size = UDim2.new(1, -32, 0, 1),
-        Position = UDim2.fromOffset(16, 56),
-        BackgroundColor3 = C.Stroke,
-        BackgroundTransparency = 0.5,
-        BorderSizePixel = 0,
-        Parent = FarmPanel,
-    })
-
-    local StatusCard = New("Frame", {
-        Size = UDim2.new(1, -32, 0, 46),
-        Position = UDim2.fromOffset(16, 68),
-        BackgroundColor3 = C.Card,
-        Parent = FarmPanel,
-    })
-    Round(StatusCard, 12)
-    Stroke(StatusCard, C.Stroke, 1, 0.5)
-    Text(StatusCard, "STATUS", UDim2.fromOffset(32, 6), UDim2.new(1, -40, 0, 14), 9, C.Muted, BOLD)
-    FarmStatusDot = New("Frame", {
-        Size = UDim2.fromOffset(8, 8),
-        Position = UDim2.fromOffset(14, 26),
-        BackgroundColor3 = C.Gray,
-        BorderSizePixel = 0,
-        Parent = StatusCard,
-    })
-    Round(FarmStatusDot, 4)
+    local FarmClose = New("TextButton", { Size = UDim2.fromOffset(28, 28), Position = UDim2.new(1, -40, 0, 14), BackgroundColor3 = C.Card2, BackgroundTransparency = 0.4, Text = "", AutoButtonColor = false, Parent = FarmHeader })
+    Round(FarmClose, 14) MakeIcon("close", FarmClose, 12, C.White, CENTER_POS, CENTER) FarmClose.MouseButton1Click:Connect(function() if AutoFarmSwitch then AutoFarmSwitch.Set(false) end end)
+    New("Frame", { Size = UDim2.new(1, -32, 0, 1), Position = UDim2.fromOffset(16, 56), BackgroundColor3 = C.Stroke, BackgroundTransparency = 0.5, BorderSizePixel = 0, Parent = FarmPanel })
+    local StatusCard = New("Frame", { Size = UDim2.new(1, -32, 0, 46), Position = UDim2.fromOffset(16, 68), BackgroundColor3 = C.Card, Parent = FarmPanel })
+    Round(StatusCard, 12) Stroke(StatusCard, C.Stroke, 1, 0.5) Text(StatusCard, "STATUS", UDim2.fromOffset(32, 6), UDim2.new(1, -40, 0, 14), 9, C.Muted, BOLD)
+    FarmStatusDot = New("Frame", { Size = UDim2.fromOffset(8, 8), Position = UDim2.fromOffset(14, 26), BackgroundColor3 = C.Gray, BorderSizePixel = 0, Parent = StatusCard }) Round(FarmStatusDot, 4)
     FarmStatusText = Text(StatusCard, "Idle", UDim2.fromOffset(32, 20), UDim2.new(1, -40, 0, 20), 12, C.White, BOLD)
+    local AutoBtn = New("TextButton", { Size = UDim2.new(1, -32, 0, 58), Position = UDim2.fromOffset(16, 124), Text = "", AutoButtonColor = false, Parent = FarmPanel })
+    Panelize(AutoBtn, 12, 0.4) local farmIcon, farmTitle, farmSub = "drawer", "Teleport Item", "Random item each click"
+    MakeIcon(farmIcon, AutoBtn, 22, C.Yellow, UDim2.fromOffset(14, 18)) Text(AutoBtn, farmTitle, UDim2.fromOffset(46, 10), UDim2.new(1, -90, 0, 20), 13, C.White, BOLD)
+    Text(AutoBtn, farmSub, UDim2.fromOffset(46, 30), UDim2.new(1, -90, 0, 18), 10, C.Gray) MakeIcon("arrow", AutoBtn, 16, C.Gray, UDim2.new(1, -32, 0.5, -8)) AutoBtn.MouseButton1Click:Connect(FarmTeleport)
+    local SafeBtn = New("TextButton", { Size = UDim2.new(1, -32, 0, 58), Position = UDim2.fromOffset(16, 192), BackgroundColor3 = C.White, Text = "", AutoButtonColor = false, Parent = FarmPanel })
+    Round(SafeBtn, 12) MakeIcon("shield", SafeBtn, 24, C.Bg, UDim2.fromOffset(14, 17)) Text(SafeBtn, "Safe Zone", UDim2.fromOffset(48, 10), UDim2.new(1, -60, 0, 20), 13, C.Bg, BOLD)
+    Text(SafeBtn, "Teleport to the safe area", UDim2.fromOffset(48, 30), UDim2.new(1, -60, 0, 18), 10, Color3.fromRGB(70, 72, 82)) SafeBtn.MouseButton1Click:Connect(TeleportSafe)
 
-    local AutoBtn = New("TextButton", {
-        Size = UDim2.new(1, -32, 0, 58),
-        Position = UDim2.fromOffset(16, 124),
-        Text = "",
-        AutoButtonColor = false,
-        Parent = FarmPanel,
-    })
-    Panelize(AutoBtn, 12, 0.4)
-    local farmIcon, farmTitle, farmSub = "key", "Auto Teleport", "Key first, then Note"
-    if IsCekguMap then
-        farmIcon, farmTitle, farmSub = "drawer", "Teleport Item", "Random item each click"
-    elseif IsAtok and AtokTape then
-        farmIcon, farmTitle, farmSub = "tape", "Teleport Tape", "Random pita / tape each click"
-    elseif IsAtok then
-        farmIcon, farmTitle, farmSub = "drawer", "Teleport Item", "Random item each click"
-    end
-    MakeIcon(farmIcon, AutoBtn, 22, C.Yellow, UDim2.fromOffset(14, 18))
-    Text(AutoBtn, farmTitle, UDim2.fromOffset(46, 10), UDim2.new(1, -90, 0, 20), 13, C.White, BOLD)
-    Text(AutoBtn, farmSub, UDim2.fromOffset(46, 30), UDim2.new(1, -90, 0, 18), 10, C.Gray)
-    MakeIcon("arrow", AutoBtn, 16, C.Gray, UDim2.new(1, -32, 0.5, -8))
-    AutoBtn.MouseEnter:Connect(function() Tween(AutoBtn, 0.12, { BackgroundColor3 = Color3.fromRGB(205, 206, 212) }) end)
-    AutoBtn.MouseLeave:Connect(function() Tween(AutoBtn, 0.12, { BackgroundColor3 = C.White }) end)
-    AutoBtn.MouseButton1Click:Connect(FarmTeleport)
-
-    local SafeBtn = New("TextButton", {
-        Size = UDim2.new(1, -32, 0, 58),
-        Position = UDim2.fromOffset(16, 192),
-        BackgroundColor3 = C.White,
-        Text = "",
-        AutoButtonColor = false,
-        Parent = FarmPanel,
-    })
-    Round(SafeBtn, 12)
-    MakeIcon("shield", SafeBtn, 24, C.Bg, UDim2.fromOffset(14, 17))
-    Text(SafeBtn, "Safe Zone", UDim2.fromOffset(48, 10), UDim2.new(1, -60, 0, 20), 13, C.Bg, BOLD)
-    Text(SafeBtn, (IsAtok and (AtokTape and "Back to your spawn" or "Fixed Atok position")) or "Teleport to the safe area", UDim2.fromOffset(48, 30), UDim2.new(1, -60, 0, 18), 10, Color3.fromRGB(70, 72, 82))
-    SafeBtn.MouseEnter:Connect(function() Tween(SafeBtn, 0.12, { BackgroundColor3 = C.Gray }) end)
-    SafeBtn.MouseLeave:Connect(function() Tween(SafeBtn, 0.12, { BackgroundColor3 = C.White }) end)
-    SafeBtn.MouseButton1Click:Connect(TeleportSafe)
-
-    BottomNav = New("Frame", {
-        AnchorPoint = Vector2.new(0.5, 1),
-        Size = UDim2.fromOffset(390, 64),
-        Position = UDim2.new(0.5, 0, 1, -12),
-        Parent = MainGui,
-    })
-    Panelize(BottomNav, 20, 0.15)
-    AddScale(BottomNav)
-
+    -- BOTTOM NAV & STATS (Sederhana)
+    BottomNav = New("Frame", { AnchorPoint = Vector2.new(0.5, 1), Size = UDim2.fromOffset(390, 64), Position = UDim2.new(0.5, 0, 1, -12), Parent = MainGui }) Panelize(BottomNav, 20, 0.15) AddScale(BottomNav)
     for i = 1, 5 do
-        local info = TabList[i]
-        local b = New("TextButton", {
-            Size = UDim2.fromOffset(70, 52),
-            Position = UDim2.fromOffset(10 + (i - 1) * 74, 6),
-            BackgroundColor3 = C.Card2,
-            BackgroundTransparency = 1,
-            Text = "",
-            AutoButtonColor = false,
-            Parent = BottomNav,
-        })
-        Round(b, 14)
-        local icon = MakeIcon(info[2], b, 28, C.Gray, UDim2.new(0.5, 0, 0.5, -3), CENTER)
-        local bar = New("Frame", {
-            AnchorPoint = Vector2.new(0.5, 1),
-            Size = UDim2.fromOffset(40, 3),
-            Position = UDim2.new(0.5, 0, 1, -1),
-            BackgroundColor3 = C.White,
-            BorderSizePixel = 0,
-            Visible = false,
-            Parent = b,
-        })
-        Round(bar, 2)
-        BottomTabs[info[1]] = { Button = b, Bar = bar, Icon = icon }
-        b.MouseButton1Click:Connect(function() SelectTab(info[1]) end)
+        local info = TabList[i] local b = New("TextButton", { Size = UDim2.fromOffset(70, 52), Position = UDim2.fromOffset(10 + (i - 1) * 74, 6), BackgroundColor3 = C.Card2, BackgroundTransparency = 1, Text = "", AutoButtonColor = false, Parent = BottomNav })
+        Round(b, 14) local icon = MakeIcon(info[2], b, 28, C.Gray, UDim2.new(0.5, 0, 0.5, -3), CENTER)
+        local bar = New("Frame", { AnchorPoint = Vector2.new(0.5, 1), Size = UDim2.fromOffset(40, 3), Position = UDim2.new(0.5, 0, 1, -1), BackgroundColor3 = C.White, BorderSizePixel = 0, Visible = false, Parent = b }) Round(bar, 2)
+        BottomTabs[info[1]] = { Button = b, Bar = bar, Icon = icon } b.MouseButton1Click:Connect(function() SelectTab(info[1]) end)
     end
-
-    StatsHolder = New("Frame", {
-        AnchorPoint = Vector2.new(1, 0),
-        Size = UDim2.fromOffset(250, 34),
-        Position = UDim2.new(1, -14, 0, 14),
-        BackgroundTransparency = 1,
-        Parent = MainGui,
-    })
-    AddScale(StatsHolder)
-
-    local FpsPill = New("Frame", {
-        Size = UDim2.fromOffset(98, 34),
-        Position = UDim2.fromOffset(18, 0),
-        BackgroundColor3 = C.Bg,
-        BackgroundTransparency = 0.2,
-        Parent = StatsHolder,
-    })
-    Round(FpsPill, 17)
+    StatsHolder = New("Frame", { AnchorPoint = Vector2.new(1, 0), Size = UDim2.fromOffset(250, 34), Position = UDim2.new(1, -14, 0, 14), BackgroundTransparency = 1, Parent = MainGui }) AddScale(StatsHolder)
+    local FpsPill = New("Frame", { Size = UDim2.fromOffset(98, 34), Position = UDim2.fromOffset(18, 0), BackgroundColor3 = C.Bg, BackgroundTransparency = 0.2, Parent = StatsHolder }) Round(FpsPill, 17)
     local FpsLabel = Text(FpsPill, "FPS: --", UDim2.fromScale(0, 0), UDim2.fromScale(1, 1), 14, C.White, BOLD, Enum.TextXAlignment.Center)
+    local PingPill = New("Frame", { Size = UDim2.fromOffset(124, 34), Position = UDim2.fromOffset(126, 0), BackgroundColor3 = C.Bg, BackgroundTransparency = 0.2, Parent = StatsHolder }) Round(PingPill, 17)
+    local PingLabel = Text(PingPill, "Ping: --", UDim2.fromScale(0, 0), UDim2.fromScale(1, 1), 14, C.White, BOLD, Enum.TextXAlignment.Center) PingLabel.RichText = true
 
-    local PingPill = New("Frame", {
-        Size = UDim2.fromOffset(124, 34),
-        Position = UDim2.fromOffset(126, 0),
-        BackgroundColor3 = C.Bg,
-        BackgroundTransparency = 0.2,
-        Parent = StatsHolder,
-    })
-    Round(PingPill, 17)
-    local PingLabel = Text(PingPill, "Ping: --", UDim2.fromScale(0, 0), UDim2.fromScale(1, 1), 14, C.White, BOLD, Enum.TextXAlignment.Center)
-    PingLabel.RichText = true
+    OpenButton = New("TextButton", { Size = UDim2.fromOffset(64, 36), Position = UDim2.fromOffset(16, 360), BackgroundColor3 = C.White, Text = "YVONE", TextColor3 = C.Bg, TextSize = 12, Font = BLACK, AutoButtonColor = false, Visible = false, ZIndex = 50, Parent = MainGui })
+    Round(OpenButton, 8) Stroke(OpenButton, C.Stroke, 1.4, 0.2) OpenButton.MouseButton1Click:Connect(function() SetUIVisible(true) end)
 
-    local openCam = Workspace.CurrentCamera
-    local openVS = openCam and openCam.ViewportSize or Vector2.new(1280, 720)
-
-    OpenButton = New("TextButton", {
-        Size = UDim2.fromOffset(64, 36),
-        Position = UDim2.fromOffset(16, math.floor(openVS.Y / 2 - 18)),
-        BackgroundColor3 = C.White,
-        Text = "YVONE",
-        TextColor3 = C.Bg,
-        TextSize = 12,
-        Font = BLACK,
-        AutoButtonColor = false,
-        Visible = false,
-        ZIndex = 50,
-        Parent = MainGui,
-    })
-    Round(OpenButton, 8)
-    Stroke(OpenButton, C.Stroke, 1.4, 0.2)
-    OpenButton.MouseEnter:Connect(function() Tween(OpenButton, 0.12, { BackgroundColor3 = C.Gray }) end)
-    OpenButton.MouseLeave:Connect(function() Tween(OpenButton, 0.12, { BackgroundColor3 = C.White }) end)
-
-    local openActive, openMoved = false, false
-    local openStart, openOrigin
-
-    OpenButton.InputBegan:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1
-            or input.UserInputType == Enum.UserInputType.Touch then
-            openActive = true
-            openMoved = false
-            openStart = input.Position
-            openOrigin = Vector2.new(OpenButton.Position.X.Offset, OpenButton.Position.Y.Offset)
-        end
-    end)
-
-    Track(UIS.InputChanged:Connect(function(input)
-        if not openActive then return end
-        if input.UserInputType ~= Enum.UserInputType.MouseMovement
-            and input.UserInputType ~= Enum.UserInputType.Touch then
-            return
-        end
-
-        local dx = input.Position.X - openStart.X
-        local dy = input.Position.Y - openStart.Y
-        if math.abs(dx) + math.abs(dy) > 8 then openMoved = true end
-
-        if openMoved then
-            local cam = Workspace.CurrentCamera
-            local vs = cam and cam.ViewportSize or Vector2.new(1280, 720)
-            local nx = math.clamp(openOrigin.X + dx, 0, math.max(vs.X - OpenButton.AbsoluteSize.X, 0))
-            local ny = math.clamp(openOrigin.Y + dy, 0, math.max(vs.Y - OpenButton.AbsoluteSize.Y, 0))
-            OpenButton.Position = UDim2.fromOffset(nx, ny)
-        end
-    end))
-
-    Track(UIS.InputEnded:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1
-            or input.UserInputType == Enum.UserInputType.Touch then
-            openActive = false
-        end
-    end))
-
-    OpenButton.MouseButton1Click:Connect(function()
-        if openMoved then
-            openMoved = false
-            return
-        end
-        SetUIVisible(true)
-    end)
-
-    local Modal = New("Frame", {
-        Size = UDim2.fromScale(1, 1),
-        BackgroundColor3 = Color3.new(0, 0, 0),
-        BackgroundTransparency = 0.35,
-        Visible = false,
-        ZIndex = 300,
-        Parent = MainGui,
-    })
-
-    local ModalBox = New("Frame", {
-        AnchorPoint = Vector2.new(0.5, 0.5),
-        Position = UDim2.fromScale(0.5, 0.5),
-        Size = UDim2.fromOffset(320, 170),
-        BackgroundColor3 = C.Panel,
-        ZIndex = 301,
-        Parent = Modal,
-    })
-    Round(ModalBox, 16)
-    Stroke(ModalBox, C.Stroke, 1.3)
-    AddScale(ModalBox)
-
+    local Modal = New("Frame", { Size = UDim2.fromScale(1, 1), BackgroundColor3 = Color3.new(0, 0, 0), BackgroundTransparency = 0.35, Visible = false, ZIndex = 300, Parent = MainGui })
+    local ModalBox = New("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromOffset(320, 170), BackgroundColor3 = C.Panel, ZIndex = 301, Parent = Modal })
+    Round(ModalBox, 16) Stroke(ModalBox, C.Stroke, 1.3) AddScale(ModalBox)
     Text(ModalBox, "Unload YVONE Hub?", UDim2.fromOffset(18, 18), UDim2.new(1, -36, 0, 26), 17, C.White, BOLD).ZIndex = 302
-    Text(ModalBox, "This removes the interface and all active features.", UDim2.fromOffset(18, 50), UDim2.new(1, -36, 0, 30), 12, C.Gray).ZIndex = 302
+    Text(ModalBox, "This removes the interface.", UDim2.fromOffset(18, 50), UDim2.new(1, -36, 0, 30), 12, C.Gray).ZIndex = 302
+    local function Cleanup() if State.Closing then return end State.Closing = true State.Fly = false State.Noclip = false State.AutoFarm = false ClearFly() local h = Humanoid() if h then h.PlatformStand = false end Disconnect(NoclipConnection) RestoreCollision() ClearESP() DisconnectAll() if WarnGui then WarnGui:Destroy() end if MainGui then MainGui:Destroy() end end
+    Btn(ModalBox, "YES, UNLOAD", UDim2.fromOffset(136, 40), UDim2.fromOffset(18, 112), Cleanup, true).ZIndex = 302
+    Btn(ModalBox, "CANCEL", UDim2.fromOffset(136, 40), UDim2.fromOffset(166, 112), function() Modal.Visible = false end).ZIndex = 302
+    Action(Pages.System, "UNLOAD YVONE HUB", 7, function() Modal.Visible = true end)
 
-    local function Cleanup()
-        if State.Closing then return end
-        State.Closing = true
-
-        State.Fly = false
-        State.Noclip = false
-        State.AutoFarm = false
-
-        ClearFly()
-        local h = Humanoid()
-        if h then h.PlatformStand = false end
-
-        Disconnect(NoclipConnection)
-        NoclipConnection = nil
-
-        RestoreCollision()
-        ClearESP()
-        DisconnectAll()
-
-        if WarnGui then WarnGui:Destroy() WarnGui = nil end
-        if MainGui then MainGui:Destroy() end
-    end
-
-    local YesBtn = Btn(ModalBox, "YES, UNLOAD", UDim2.fromOffset(136, 40), UDim2.fromOffset(18, 112), Cleanup, true)
-    YesBtn.ZIndex = 302
-    local NoBtn = Btn(ModalBox, "CANCEL", UDim2.fromOffset(136, 40), UDim2.fromOffset(166, 112), function()
-        Modal.Visible = false
-    end)
-    NoBtn.ZIndex = 302
-
-    Action(SystemPage, "UNLOAD YVONE HUB", 7, function()
-        Modal.Visible = true
-    end)
-
-    local frames = 0
-    local fps = 0
-    local fpsTimer = os.clock()
-
-    Track(RunService.RenderStepped:Connect(function()
-        frames = frames + 1
-        local now = os.clock()
-        if now - fpsTimer >= 1 then
-            fps = frames
-            frames = 0
-            fpsTimer = now
-        end
-    end))
-
-    task.spawn(function()
-        while MainGui and MainGui.Parent do
-            task.wait(1)
-
-            local ping = 0
-            pcall(function() ping = math.floor(Player:GetNetworkPing() * 1000) end)
-
-            local col = C.Green
-            if ping >= 150 then col = C.Red elseif ping >= 80 then col = C.Yellow end
-
-            FpsLabel.Text = "FPS: " .. fps
-            PingLabel.Text = string.format(
-                'Ping: <font color="rgb(%d,%d,%d)">%dms</font>',
-                math.floor(col.R * 255), math.floor(col.G * 255), math.floor(col.B * 255), ping
-            )
-
-            if State.Speed ~= 16 then UpdateSpeed() end
-        end
-    end)
-
-    task.spawn(function()
-        while MainGui and MainGui.Parent do
-            task.wait(UPDATE_INTERVAL)
-            if State.ESP_Opah or State.ESP_Item or State.ESP_Drawer or State.ESP_CekguItem or State.ESP_AtokItem then UpdateESP() end
-            if IsCekguMap and State.ESP_CekguMob then UpdateCekguMobESP() end
-            if IsAtok and State.ESP_AtokMob then UpdateAtokMobESP() end
-        end
-    end)
-
-    task.spawn(function()
-        while MainGui and MainGui.Parent do
-            task.wait(SCAN_INTERVAL)
-            if State.ESP_Opah or State.ESP_Item or State.ESP_Drawer or State.ESP_CekguItem or State.ESP_AtokItem then ScanESP() end
-        end
-    end)
-
-    Track(Workspace.DescendantAdded:Connect(function(inst)
-        if not (State.ESP_Opah or State.ESP_Item or State.ESP_Drawer or State.ESP_CekguItem or State.ESP_AtokItem) then return end
-
-        local nameOk
-        if IsCekguMap then
-            nameOk = GetCategory(inst.Name) ~= nil
-        elseif IsAtok then
-            nameOk = IsDrawerName(inst) or GetCategory(inst.Name) ~= nil
-        else
-            nameOk = GetCategory(inst.Name) ~= nil
-        end
-        if not nameOk then return end
-
-        task.delay(0.3, function()
-            if not MainGui or not MainGui.Parent then return end
-            if not inst.Parent or ESPObjects[inst] then return end
-
-            local cat = Classify(inst)
-            if not cat or not CategoryEnabled(cat) then return end
-            if IsInsideDrawer(inst) then return end
-
-            local root = Root()
-            local part = GetPart(inst)
-            if root and part and (root.Position - part.Position).Magnitude <= MAX_DISTANCE then
-                CreateESP(inst)
-            end
-        end)
-    end))
-
-    Track(Workspace.DescendantRemoving:Connect(function(inst)
-        if ESPObjects[inst] then RemoveESP(inst) end
-        if inst == CachedSafeZone then CachedSafeZone = nil end
-    end))
-
-    Track(Player.CharacterAdded:Connect(function()
-        ClearESP()
-        ClearFly()
-        RestoreCollision()
-        CachedSafeZone = nil
-        TargetCache.Time = 0
-
-        State.Fly = false
-        State.Noclip = false
-        SyncFlySwitches(false)
-        NoclipSwitch.Set(false, true)
-        Disconnect(NoclipConnection)
-        NoclipConnection = nil
-
-        task.wait(1)
-        if not MainGui or not MainGui.Parent then return end
-
-        UpdateSpeed()
-        if State.ESP_Opah or State.ESP_Item or State.ESP_Drawer or State.ESP_CekguItem or State.ESP_AtokItem then RefreshESP() end
-        Notify("Character", "Character successfully loaded.")
-    end))
-
-    ApplyScale()
-    Track(Workspace:GetPropertyChangedSignal("CurrentCamera"):Connect(ApplyScale))
-    if Workspace.CurrentCamera then
-        Track(Workspace.CurrentCamera:GetPropertyChangedSignal("ViewportSize"):Connect(ApplyScale))
-    end
-
-    SelectTab("Home")
-
-    TopToast("YVONE Hub", "Welcome back!")
-    Notify("Map detected", MapLabel .. " (" .. (IsVip and "VIP" or "Free") .. ")")
-
-    if IsAtok then
-        warn("[YVONE] Di map Atok tidak ada ESP Atok (mob). Hanya ESP Drawer yang tersedia.")
-
-        WarnGui = New("ScreenGui", {
-            Name = "YvoneWarning",
-            ResetOnSpawn = false,
-            IgnoreGuiInset = true,
-            DisplayOrder = 500,
-            Parent = PlayerGui,
-        })
-
-        local Warn = New("Frame", {
-            AnchorPoint = Vector2.new(0.5, 0),
-            Size = UDim2.fromOffset(460, 84),
-            Position = UDim2.new(0.5, 0, 0, 96),
-            BackgroundColor3 = C.Panel,
-            Parent = WarnGui,
-        })
-        Round(Warn, 16)
-        Stroke(Warn, C.Yellow, 1.4, 0.2)
-        AddScale(Warn)
-        ApplyScale()
-
-        local wi = New("Frame", {
-            Size = UDim2.fromOffset(40, 40),
-            Position = UDim2.fromOffset(14, 22),
-            BackgroundColor3 = C.Yellow,
-            Parent = Warn,
-        })
-        Round(wi, 20)
-        MakeIcon("warn", wi, 22, C.Bg, CENTER_POS, CENTER)
-
-        Text(Warn, "Peringatan", UDim2.fromOffset(66, 10), UDim2.new(1, -170, 0, 22), 15, C.Yellow, BOLD)
-        local wmsg = Text(Warn, "Di map Atok tidak ada ESP Atok (mob). Hanya ESP Drawer yang tersedia.", UDim2.fromOffset(66, 34), UDim2.new(1, -170, 0, 42), 12, C.White)
-        wmsg.TextWrapped = true
-        wmsg.TextYAlignment = Enum.TextYAlignment.Top
-
-        local HideBtn = New("TextButton", {
-            Size = UDim2.fromOffset(76, 36),
-            Position = UDim2.new(1, -90, 0.5, -18),
-            BackgroundColor3 = C.Card2,
-            Text = "Hide",
-            TextColor3 = C.White,
-            TextSize = 13,
-            Font = BOLD,
-            AutoButtonColor = false,
-            Parent = Warn,
-        })
-        Round(HideBtn, 10)
-        Stroke(HideBtn, C.Stroke, 1, 0.4)
-        HideBtn.MouseEnter:Connect(function() Tween(HideBtn, 0.12, { BackgroundColor3 = C.Stroke }) end)
-        HideBtn.MouseLeave:Connect(function() Tween(HideBtn, 0.12, { BackgroundColor3 = C.Card2 }) end)
-        HideBtn.MouseButton1Click:Connect(function()
-            if WarnGui then
-                WarnGui:Destroy()
-                WarnGui = nil
-            end
-        end)
-    end
+    local frames, fps, fpsTimer = 0, 0, os.clock()
+    Track(RunService.RenderStepped:Connect(function() frames = frames + 1 local now = os.clock() if now - fpsTimer >= 1 then fps = frames frames = 0 fpsTimer = now end end))
+    
+    task.spawn(function() while MainGui and MainGui.Parent do task.wait(1) local ping = 0 pcall(function() ping = math.floor(Player:GetNetworkPing() * 1000) end) FpsLabel.Text = "FPS: " .. fps PingLabel.Text = "Ping: " .. ping .. "ms" if State.Speed ~= 16 then UpdateSpeed() end end end)
+    task.spawn(function() while MainGui and MainGui.Parent do task.wait(UPDATE_INTERVAL) if State.ESP_Item then UpdateESP() end if State.ESP_Mob then UpdateGlobalMobESP() end end end)
+    task.spawn(function() while MainGui and MainGui.Parent do task.wait(SCAN_INTERVAL) if State.ESP_Item then ScanESP() end end end)
+    
+    Track(Player.CharacterAdded:Connect(function() ClearESP() ClearFly() RestoreCollision() CachedSafeZone = nil TargetCache.Time = 0 State.Fly = false State.Noclip = false SyncFlySwitches(false) NoclipSwitch.Set(false, true) Disconnect(NoclipConnection) task.wait(1) if MainGui and MainGui.Parent then UpdateSpeed() if State.ESP_Item then RefreshESP() end end end))
+    ApplyScale() SelectTab("Home") TopToast("YVONE Hub", "Welcome back!") Notify("Map detected", MapLabel .. " (" .. (IsVip and "VIP" or "Free") .. ")")
 end
 
 --==============================================================
 -- ACCESS SELECTION (FREE / VIP) + LAUNCH
 --==============================================================
-
-local function StartLaunch(vip)
-    if State.Launched then return end
-    IsVip = vip
-    Tween(LoadCard, 0.2, { Size = UDim2.fromOffset(360, 240) })
-    task.wait(0.2)
-    Launch()
-end
-
+local function StartLaunch(vip) if State.Launched then return end IsVip = vip Tween(LoadCard, 0.2, { Size = UDim2.fromOffset(360, 240) }) task.wait(0.2) Launch() end
 local function BuildAccessSelect()
-    FitLoadScale()
-    LoadStatus.Visible = false
-    LoadBar.Visible = false
-    Tween(LoadCard, 0.3, { Size = UDim2.fromOffset(440, 310) })
-
-    local SelectView = New("Frame", {
-        Size = UDim2.new(1, -40, 0, 170),
-        Position = UDim2.fromOffset(20, 126),
-        BackgroundTransparency = 1,
-        Parent = LoadCard,
-    })
-
-    local PassView = New("Frame", {
-        Size = UDim2.new(1, -40, 0, 170),
-        Position = UDim2.fromOffset(20, 126),
-        BackgroundTransparency = 1,
-        Visible = false,
-        Parent = LoadCard,
-    })
-
+    FitLoadScale() LoadStatus.Visible = false LoadBar.Visible = false Tween(LoadCard, 0.3, { Size = UDim2.fromOffset(440, 310) })
+    local SelectView = New("Frame", { Size = UDim2.new(1, -40, 0, 170), Position = UDim2.fromOffset(20, 126), BackgroundTransparency = 1, Parent = LoadCard })
+    local PassView = New("Frame", { Size = UDim2.new(1, -40, 0, 170), Position = UDim2.fromOffset(20, 126), BackgroundTransparency = 1, Visible = false, Parent = LoadCard })
     Text(SelectView, "Choose your access", UDim2.fromOffset(0, 0), UDim2.new(1, 0, 0, 20), 12, C.Gray, BOLD, Enum.TextXAlignment.Center)
-
+    
     local function OptionCard(side, iconName, iconColor, title, desc, tag, accent, onClick)
-        local card = New("TextButton", {
-            Size = UDim2.new(0.5, -6, 0, 136),
-            Position = (side == 0) and UDim2.fromOffset(0, 28) or UDim2.new(0.5, 6, 0, 28),
-            Text = "",
-            AutoButtonColor = false,
-            Parent = SelectView,
-        })
-        Panelize(card, 14, 0.35)
-        local st = card:FindFirstChildOfClass("UIStroke")
-
-        local ic = New("Frame", {
-            Size = UDim2.fromOffset(44, 44),
-            Position = UDim2.new(0.5, -22, 0, 14),
-            BackgroundColor3 = C.Card2,
-            Parent = card,
-        })
-        Round(ic, 22)
-        MakeIcon(iconName, ic, 22, iconColor, CENTER_POS, CENTER)
-
-        Text(card, title, UDim2.fromOffset(0, 64), UDim2.new(1, 0, 0, 20), 14, accent, BOLD, Enum.TextXAlignment.Center)
-
-        local d = Text(card, desc, UDim2.fromOffset(10, 86), UDim2.new(1, -20, 0, 28), 10, C.Gray, FONT, Enum.TextXAlignment.Center)
-        d.TextWrapped = true
-        d.TextYAlignment = Enum.TextYAlignment.Top
-
+        local card = New("TextButton", { Size = UDim2.new(0.5, -6, 0, 136), Position = (side == 0) and UDim2.fromOffset(0, 28) or UDim2.new(0.5, 6, 0, 28), Text = "", AutoButtonColor = false, Parent = SelectView })
+        Panelize(card, 14, 0.35) local st = card:FindFirstChildOfClass("UIStroke")
+        local ic = New("Frame", { Size = UDim2.fromOffset(44, 44), Position = UDim2.new(0.5, -22, 0, 14), BackgroundColor3 = C.Card2, Parent = card })
+        Round(ic, 22) MakeIcon(iconName, ic, 22, iconColor, CENTER_POS, CENTER) Text(card, title, UDim2.fromOffset(0, 64), UDim2.new(1, 0, 0, 20), 14, accent, BOLD, Enum.TextXAlignment.Center)
+        local d = Text(card, desc, UDim2.fromOffset(10, 86), UDim2.new(1, -20, 0, 28), 10, C.Gray, FONT, Enum.TextXAlignment.Center) d.TextWrapped = true d.TextYAlignment = Enum.TextYAlignment.Top
         Text(card, tag, UDim2.fromOffset(0, 114), UDim2.new(1, 0, 0, 16), 9, accent, BOLD, Enum.TextXAlignment.Center)
-
-        card.MouseEnter:Connect(function()
-            Tween(st, 0.15, { Color = accent, Transparency = 0 })
-        end)
-        card.MouseLeave:Connect(function()
-            Tween(st, 0.15, { Color = C.Stroke, Transparency = 0.35 })
-        end)
+        card.MouseEnter:Connect(function() Tween(st, 0.15, { Color = accent, Transparency = 0 }) end) card.MouseLeave:Connect(function() Tween(st, 0.15, { Color = C.Stroke, Transparency = 0.35 }) end)
         card.MouseButton1Click:Connect(onClick)
     end
 
-    MakeIcon("crown", PassView, 20, C.Yellow, UDim2.new(0.5, -66, 0, 1))
-    Text(PassView, "VIP Access", UDim2.fromOffset(0, 0), UDim2.new(1, 0, 0, 22), 16, C.Yellow, BOLD, Enum.TextXAlignment.Center)
-    Text(PassView, "Enter the password for instant teleport", UDim2.fromOffset(0, 24), UDim2.new(1, 0, 0, 18), 11, C.Gray, FONT, Enum.TextXAlignment.Center)
-
-    local box = New("TextBox", {
-        Size = UDim2.new(1, 0, 0, 42),
-        Position = UDim2.fromOffset(0, 52),
-        BackgroundColor3 = C.Card,
-        Text = "",
-        PlaceholderText = "Password",
-        PlaceholderColor3 = C.Muted,
-        TextColor3 = C.White,
-        TextSize = 18,
-        Font = BOLD,
-        ClearTextOnFocus = false,
-        TextXAlignment = Enum.TextXAlignment.Center,
-        Parent = PassView,
-    })
-    Round(box, 10)
-    local boxStroke = Stroke(box, C.Stroke, 1.2, 0.2)
-
+    MakeIcon("crown", PassView, 20, C.Yellow, UDim2.new(0.5, -66, 0, 1)) Text(PassView, "VIP Access", UDim2.fromOffset(0, 0), UDim2.new(1, 0, 0, 22), 16, C.Yellow, BOLD, Enum.TextXAlignment.Center)
+    Text(PassView, "Enter the password", UDim2.fromOffset(0, 24), UDim2.new(1, 0, 0, 18), 11, C.Gray, FONT, Enum.TextXAlignment.Center)
+    local box = New("TextBox", { Size = UDim2.new(1, 0, 0, 42), Position = UDim2.fromOffset(0, 52), BackgroundColor3 = C.Card, Text = "", PlaceholderText = "Password", PlaceholderColor3 = C.Muted, TextColor3 = C.White, TextSize = 18, Font = BOLD, ClearTextOnFocus = false, TextXAlignment = Enum.TextXAlignment.Center, Parent = PassView })
+    Round(box, 10) local boxStroke = Stroke(box, C.Stroke, 1.2, 0.2)
     local msg = Text(PassView, "", UDim2.fromOffset(0, 98), UDim2.new(1, 0, 0, 18), 11, C.Red, BOLD, Enum.TextXAlignment.Center)
-
-    local real = ""
-    local masking = false
+    local real = "" local masking = false
     box:GetPropertyChangedSignal("Text"):Connect(function()
-        if masking then return end
-        masking = true
-        local t = box.Text
-        if #t > #real then
-            real = real .. string.sub(t, #real + 1)
-        elseif #t < #real then
-            real = string.sub(real, 1, #t)
-        end
-        box.Text = string.rep("*", #real)
-        masking = false
+        if masking then return end masking = true local t = box.Text
+        if #t > #real then real = real .. string.sub(t, #real + 1) elseif #t < #real then real = string.sub(real, 1, #t) end
+        box.Text = string.rep("*", #real) masking = false
     end)
-
     local unlocking = false
-
     local function TryUnlock()
-        if unlocking then return end
-        unlocking = true
-
-        local submittedKey = real
-
-        msg.TextColor3 = C.Gray
-        msg.Text = "Memeriksa key..."
-        boxStroke.Color = C.Stroke
-
+        if unlocking then return end unlocking = true local submittedKey = real
+        msg.TextColor3 = C.Gray msg.Text = "Memeriksa key..." boxStroke.Color = C.Stroke
         task.spawn(function()
-            local ok, _plan, reason = VerifyVIP(submittedKey)
-
-            if ok then
-                msg.TextColor3 = C.Green
-                msg.Text = "Access granted"
-                boxStroke.Color = C.Green
-                task.wait(0.5)
-                StartLaunch(true)
-            else
-                msg.TextColor3 = C.Red
-                msg.Text = reason or "Key salah, coba lagi."
-                boxStroke.Color = C.Red
-
-                real = ""
-                masking = true
-                box.Text = ""
-                masking = false
-
-                for i = 1, 4 do
-                    box.Position = UDim2.fromOffset((i % 2 == 0) and -6 or 6, 52)
-                    task.wait(0.04)
-                end
-                box.Position = UDim2.fromOffset(0, 52)
-
-                unlocking = false
-            end
+            local ok, _, reason = VerifyVIP(submittedKey)
+            if ok then msg.TextColor3 = C.Green msg.Text = "Access granted" boxStroke.Color = C.Green task.wait(0.5) StartLaunch(true)
+            else msg.TextColor3 = C.Red msg.Text = reason or "Key salah." boxStroke.Color = C.Red real = "" masking = true box.Text = "" masking = false
+                for i = 1, 4 do box.Position = UDim2.fromOffset((i % 2 == 0) and -6 or 6, 52) task.wait(0.04) end box.Position = UDim2.fromOffset(0, 52) unlocking = false end
         end)
     end
-
-    box.FocusLost:Connect(function(enterPressed)
-        if enterPressed then TryUnlock() end
-    end)
-
-    Btn(PassView, "BACK", UDim2.new(0.38, -6, 0, 40), UDim2.fromOffset(0, 124), function()
-        if unlocking then return end
-        real = ""
-        masking = true
-        box.Text = ""
-        masking = false
-        msg.Text = ""
-        boxStroke.Color = C.Stroke
-        PassView.Visible = false
-        SelectView.Visible = true
-    end)
-
+    box.FocusLost:Connect(function(enterPressed) if enterPressed then TryUnlock() end end)
+    Btn(PassView, "BACK", UDim2.new(0.38, -6, 0, 40), UDim2.fromOffset(0, 124), function() if unlocking then return end real = "" masking = true box.Text = "" masking = false msg.Text = "" boxStroke.Color = C.Stroke PassView.Visible = false SelectView.Visible = true end)
     Btn(PassView, "UNLOCK VIP", UDim2.new(0.62, -6, 0, 40), UDim2.new(0.38, 6, 0, 124), TryUnlock, true)
-
-    OptionCard(0, "person", C.Gray, "Free User", "All features, 2s wait on teleport", "NO PASSWORD", C.White, function()
-        StartLaunch(false)
-    end)
-
-    OptionCard(1, "crown", C.Yellow, "VIP User", "All features, instant teleport", "PASSWORD REQUIRED", C.Yellow, function()
-        SelectView.Visible = false
-        PassView.Visible = true
-        task.defer(function()
-            pcall(function() box:CaptureFocus() end)
-        end)
-    end)
+    
+    OptionCard(0, "person", C.Gray, "Free User", "All features, 2s wait", "NO PASSWORD", C.White, function() StartLaunch(false) end)
+    OptionCard(1, "crown", C.Yellow, "VIP User", "All features, instant teleport", "PASSWORD REQUIRED", C.Yellow, function() SelectView.Visible = false PassView.Visible = true task.defer(function() pcall(function() box:CaptureFocus() end) end) end)
 end
 
 OnLoadingDone = BuildAccessSelect
