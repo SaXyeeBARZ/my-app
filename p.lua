@@ -1016,13 +1016,11 @@ end
 local function Classify(inst)
     if IsAtok then
         if AtokTape then
-            -- Atok 2: tidak diubah (perilaku lama)
             if IsDrawerTarget(inst) then
                 return "DRAWER", C.Yellow
             end
             return nil
         end
-        -- Atok biasa: deteksi item (key / crowbar / note)
         local n = string.lower(inst.Name)
         if string.find(n, "safezone") or string.find(n, "keypad") or string.find(n, "chair") then
             return nil
@@ -1136,7 +1134,6 @@ local function ApplyESPFlags()
     end
 end
 
--- ⚠️ IsInsideDrawer: Hanya memblokir jika drawer TERTUTUP (tidak ada ProximityPrompt)
 local function IsInsideDrawer(inst)
     local n = inst.Parent
     while n and n ~= Workspace do
@@ -1243,7 +1240,7 @@ end
 -- TARGETS / TELEPORT / AUTO TELEPORT
 --==============================================================
 
-local TargetCache = { Key = {}, Note = {}, Drawer = {}, Tape = {}, Crowbar = {}, Time = 0 }
+local TargetCache = { Key = {}, Note = {}, Drawer = {}, Tape = {}, Crowbar = {}, Lock = {}, Time = 0 }
 
 local function ZoneInfo(inst)
     if inst:IsA("BasePart") then return inst.CFrame, inst.Size end
@@ -1284,6 +1281,7 @@ local function RefreshTargets()
     TargetCache.Drawer = {}
     TargetCache.Tape = {}
     TargetCache.Crowbar = {}
+    TargetCache.Lock = {}
 
     local char = Character()
     local zones = {}
@@ -1320,6 +1318,17 @@ local function RefreshTargets()
                     end
                 end
             end
+
+            -- Khusus Opah: deteksi gembok/lock (untuk Auto Farm V1/V2)
+            if IsOpahMap then
+                local n = string.lower(inst.Name)
+                if string.find(n, "gembok") or string.find(n, "lock") or string.find(n, "padlock") then
+                    local part = GetPart(inst)
+                    if part then
+                        table.insert(TargetCache.Lock, part)
+                    end
+                end
+            end
         end
     end
 
@@ -1346,34 +1355,6 @@ local function RefreshTargets()
             end
         end
     end
-end
-
-local function FindNearest(kind)
-    RefreshTargets()
-    local root = Root()
-    if not root then return nil end
-
-    local list
-    if kind == "key" then
-        list = TargetCache.Key
-    elseif kind == "tape" then
-        list = TargetCache.Tape
-    else
-        list = TargetCache.Note
-    end
-    local best
-    local shortest = math.huge
-
-    for _, part in ipairs(list) do
-        if part.Parent then
-            local d = (root.Position - part.Position).Magnitude
-            if d < shortest then
-                shortest = d
-                best = part
-            end
-        end
-    end
-    return best
 end
 
 local function PickUnvisited(list, findNearest)
@@ -1698,176 +1679,248 @@ local function RunFarm(fn)
     task.delay(0.6, function() TeleportBusy = false end)
 end
 
-local function TeleportItem(kind)
-    if TeleportLoadingActive then return end
-    if not Root() then Notify("Teleport", "Character belum siap.", "err") return end
+--==============================================================
+-- AUTO FARM OPAH V1 & V2 (FITUR BARU)
+--==============================================================
 
-    if IsNearOpah(OPAH_CANCEL_RADIUS) then
-        Notify("Quick Action", "Opah terlalu dekat, teleport dibatalkan.", "err")
-        return
+-- Helper: cari ProximityPrompt atau ClickDetector terdekat dari sebuah instance
+local function FindInteractable(inst)
+    if not inst then return nil end
+    local prompt = inst:FindFirstChildWhichIsA("ProximityPrompt", true)
+    if prompt then return prompt end
+    local cd = inst:FindFirstChildWhichIsA("ClickDetector", true)
+    if cd then return cd end
+    -- Cek juga parent (kadang prompt ada di parent model)
+    local parent = inst.Parent
+    if parent then
+        local p2 = parent:FindFirstChildWhichIsA("ProximityPrompt", true)
+        if p2 then return p2 end
+        local c2 = parent:FindFirstChildWhichIsA("ClickDetector", true)
+        if c2 then return c2 end
     end
-
-    RefreshNow()
-    local first = (kind == "key") and TargetCache.Key or TargetCache.Note
-    if #first == 0 then
-        Notify("Quick Action", "Target belum ditemukan.", "err")
-        return
-    end
-
-    if not TeleportLoading((kind == "key") and "Key" or "Note") then return end
-
-    Rescan()
-    local list = (kind == "key") and TargetCache.Key or TargetCache.Note
-    local target = PickUnvisited(list, true)
-
-    if target and PlaceNow(target.Position) then
-        Notify("Quick Action", "Target ditemukan.")
-    else
-        Notify("Quick Action", "Target belum ditemukan.", "err")
-    end
+    return nil
 end
 
-local function SmartTeleport()
+-- Helper: interaksi dengan prompt/detector
+local function InteractWith(inst)
+    local obj = FindInteractable(inst)
+    if not obj then return false end
+    if obj:IsA("ProximityPrompt") then
+        obj:InputHoldBegin()
+        task.wait(obj.HoldDuration + 0.1)
+        obj:InputHoldEnd()
+        return true
+    elseif obj:IsA("ClickDetector") then
+        fireclickdetector(obj)
+        return true
+    end
+    return false
+end
+
+-- Helper: cari gembok yang cocok dengan key (berdasarkan warna atau nama)
+local function FindMatchingLock(keyPart)
+    if not keyPart then return nil end
+    local keyName = string.lower(keyPart.Name)
+    local color = nil
+    if string.find(keyName, "red") then color = "red"
+    elseif string.find(keyName, "blue") then color = "blue"
+    elseif string.find(keyName, "green") then color = "green"
+    elseif string.find(keyName, "yellow") then color = "yellow"
+    end
+
+    local root = Root()
+    if not root then return nil end
+
+    local best, bestDist = nil, math.huge
+    for _, lockPart in ipairs(TargetCache.Lock) do
+        if lockPart.Parent then
+            local lockName = string.lower(lockPart.Name)
+            local match = false
+            if color and string.find(lockName, color) then
+                match = true
+            elseif string.find(lockName, "gembok") or string.find(lockName, "lock") then
+                -- Jika tidak ada warna di nama lock, anggap cocok (fallback)
+                match = true
+            end
+            if match then
+                local d = (root.Position - lockPart.Position).Magnitude
+                if d < bestDist then
+                    bestDist = d
+                    best = lockPart
+                end
+            end
+        end
+    end
+    return best
+end
+
+-- Auto Farm V1: ambil key terdekat -> teleport ke key -> interaksi ke gembok yang cocok
+local function AutoFarmOpahV1()
     RunFarm(function()
+        if not IsOpahMap then
+            Notify("Auto Farm V1", "Fitur ini hanya untuk map Opah.", "err")
+            return
+        end
+
         if not Root() then
             SetFarmStatus("Waiting for character", C.Gray)
-            Notify("Teleport", "Character belum siap.", "err")
+            Notify("Auto Farm V1", "Character belum siap.", "err")
             return
         end
 
         if IsNearOpah(OPAH_CANCEL_RADIUS) then
             SetFarmStatus("Opah terlalu dekat", C.Yellow)
+            Notify("Auto Farm V1", "Opah terlalu dekat, farm dibatalkan.", "err")
+            return
+        end
+
+        RefreshNow()
+        if #TargetCache.Key == 0 then
+            SetFarmStatus("No key found", C.Yellow)
+            Notify("Auto Farm V1", "Key tidak ditemukan.", "err")
+            return
+        end
+
+        -- Ambil key terdekat
+        local keyPart = PickUnvisited(TargetCache.Key, true)
+        if not keyPart then
+            SetFarmStatus("No key found", C.Yellow)
+            Notify("Auto Farm V1", "Key tidak ditemukan.", "err")
+            return
+        end
+
+        if not TeleportLoading("Key") then
+            SetFarmStatus("Teleport cancelled", C.Gray)
+            return
+        end
+
+        -- Teleport ke key
+        Rescan()
+        if not PlaceNow(keyPart.Position) then
+            SetFarmStatus("Failed to teleport", C.Red)
+            Notify("Auto Farm V1", "Gagal teleport ke key.", "err")
+            return
+        end
+
+        -- Interaksi dengan key (ambil)
+        task.wait(0.3)
+        InteractWith(keyPart)
+        SetFarmStatus("Key taken", C.Green)
+
+        -- Cari gembok yang cocok
+        local lockPart = FindMatchingLock(keyPart)
+        if not lockPart then
+            SetFarmStatus("No matching lock", C.Yellow)
+            Notify("Auto Farm V1", "Gembok yang cocok tidak ditemukan.", "err")
+            return
+        end
+
+        -- Teleport ke gembok
+        if not PlaceNow(lockPart.Position) then
+            SetFarmStatus("Failed to teleport to lock", C.Red)
+            Notify("Auto Farm V1", "Gagal teleport ke gembok.", "err")
+            return
+        end
+
+        -- Interaksi dengan gembok
+        task.wait(0.3)
+        InteractWith(lockPart)
+        SetFarmStatus("Lock opened", C.Green)
+        Notify("Auto Farm V1", "Gembok berhasil dibuka.")
+    end)
+end
+
+-- Auto Farm V2: sama seperti V1 + otomatis masukkan note/passcode
+local function AutoFarmOpahV2()
+    RunFarm(function()
+        if not IsOpahMap then
+            Notify("Auto Farm V2", "Fitur ini hanya untuk map Opah.", "err")
+            return
+        end
+
+        if not Root() then
+            SetFarmStatus("Waiting for character", C.Gray)
+            Notify("Auto Farm V2", "Character belum siap.", "err")
+            return
+        end
+
+        if IsNearOpah(OPAH_CANCEL_RADIUS) then
+            SetFarmStatus("Opah terlalu dekat", C.Yellow)
+            Notify("Auto Farm V2", "Opah terlalu dekat, farm dibatalkan.", "err")
             return
         end
 
         RefreshNow()
         if #TargetCache.Key == 0 and #TargetCache.Note == 0 then
             SetFarmStatus("No key or note found", C.Yellow)
+            Notify("Auto Farm V2", "Key atau note tidak ditemukan.", "err")
             return
         end
 
-        if not TeleportLoading("Key / Note") then
-            SetFarmStatus("Teleport cancelled", C.Gray)
-            return
+        -- Ambil key terdekat (jika ada)
+        local keyPart = PickUnvisited(TargetCache.Key, true)
+        if keyPart then
+            if not TeleportLoading("Key") then
+                SetFarmStatus("Teleport cancelled", C.Gray)
+                return
+            end
+
+            Rescan()
+            if not PlaceNow(keyPart.Position) then
+                SetFarmStatus("Failed to teleport", C.Red)
+                Notify("Auto Farm V2", "Gagal teleport ke key.", "err")
+                return
+            end
+
+            task.wait(0.3)
+            InteractWith(keyPart)
+            SetFarmStatus("Key taken", C.Green)
         end
 
-        Rescan()
-        local target = PickUnvisited(TargetCache.Key, true)
-        local label = "Key"
+        -- Ambil note terdekat (jika ada)
+        local notePart = PickUnvisited(TargetCache.Note, true)
+        if notePart then
+            if not TeleportLoading("Note") then
+                SetFarmStatus("Teleport cancelled", C.Gray)
+                return
+            end
 
-        if not target then
-            target = PickUnvisited(TargetCache.Note, true)
-            label = "Note"
+            Rescan()
+            if not PlaceNow(notePart.Position) then
+                SetFarmStatus("Failed to teleport to note", C.Red)
+                Notify("Auto Farm V2", "Gagal teleport ke note.", "err")
+                return
+            end
+
+            task.wait(0.3)
+            InteractWith(notePart)
+            SetFarmStatus("Note taken", C.Green)
         end
 
-        if target and PlaceNow(target.Position) then
-            SetFarmStatus("Teleported to " .. label, C.Green)
-        else
-            SetFarmStatus("No key or note found", C.Yellow)
+        -- Cari gembok yang cocok dengan key (jika ada key)
+        local lockPart = nil
+        if keyPart then
+            lockPart = FindMatchingLock(keyPart)
         end
+        if not lockPart and #TargetCache.Lock > 0 then
+            -- Fallback: ambil gembok terdekat
+            lockPart = PickUnvisited(TargetCache.Lock, true)
+        end
+
+        if lockPart then
+            if not PlaceNow(lockPart.Position) then
+                SetFarmStatus("Failed to teleport to lock", C.Red)
+                Notify("Auto Farm V2", "Gagal teleport ke gembok.", "err")
+                return
+            end
+
+            task.wait(0.3)
+            InteractWith(lockPart)
+            SetFarmStatus("Lock opened", C.Green)
+        end
+
+        Notify("Auto Farm V2", "Selesai: key, note, dan gembok diproses.")
     end)
-end
-
--- TeleportKey: teleport acak ke salah satu item (key / crowbar / note) untuk Atok biasa
-local function TeleportKey(notify)
-    RunFarm(function()
-        if not Root() then
-            SetFarmStatus("Waiting for character", C.Gray)
-            if notify then Notify("Teleport", "Character belum siap.", "err") end
-            return
-        end
-
-        if IsNearOpah(OPAH_CANCEL_RADIUS) then
-            SetFarmStatus("Opah terlalu dekat", C.Yellow)
-            if notify then Notify("Teleport", "Opah terlalu dekat, teleport dibatalkan.", "err") end
-            return
-        end
-
-        RefreshNow()
-        local total = #TargetCache.Key + #TargetCache.Crowbar + #TargetCache.Note
-        if total == 0 then
-            SetFarmStatus("No item found", C.Yellow)
-            if notify then Notify("Teleport", "Item tidak ditemukan.", "err") end
-            return
-        end
-
-        if not TeleportLoading("Item") then
-            SetFarmStatus("Teleport cancelled", C.Gray)
-            return
-        end
-
-        Rescan()
-        local list = {}
-        for _, p in ipairs(TargetCache.Key) do if p.Parent then table.insert(list, p) end end
-        for _, p in ipairs(TargetCache.Crowbar) do if p.Parent then table.insert(list, p) end end
-        for _, p in ipairs(TargetCache.Note) do if p.Parent then table.insert(list, p) end end
-
-        local pick = PickUnvisited(list, false)
-
-        if pick and PlaceNow(pick.Position) then
-            SetFarmStatus(string.format("Random key (%d found)", #list), C.Green)
-            if notify then Notify("Teleport", "Teleported to a random key.") end
-        else
-            SetFarmStatus("No item found", C.Yellow)
-            if notify then Notify("Teleport", "Item tidak ditemukan.", "err") end
-        end
-    end)
-end
-
-local function TeleportTape(notify)
-    RunFarm(function()
-        if not Root() then
-            SetFarmStatus("Waiting for character", C.Gray)
-            if notify then Notify("Teleport", "Character belum siap.", "err") end
-            return
-        end
-
-        if IsNearOpah(OPAH_CANCEL_RADIUS) then
-            SetFarmStatus("Opah terlalu dekat", C.Yellow)
-            if notify then Notify("Teleport", "Opah terlalu dekat, teleport dibatalkan.", "err") end
-            return
-        end
-
-        RefreshNow()
-        if #TargetCache.Tape == 0 then
-            SetFarmStatus("No tape found", C.Yellow)
-            if notify then Notify("Teleport", "Tape / pita tidak ditemukan.", "err") end
-            return
-        end
-
-        if not TeleportLoading("Tape") then
-            SetFarmStatus("Teleport cancelled", C.Gray)
-            return
-        end
-
-        Rescan()
-        local list = {}
-        for _, part in ipairs(TargetCache.Tape) do
-            if part.Parent then table.insert(list, part) end
-        end
-
-        local pick = PickUnvisited(list, false)
-
-        if pick and PlaceNow(pick.Position) then
-            SetFarmStatus(string.format("Random tape (%d found)", #list), C.Green)
-            if notify then Notify("Teleport", "Teleported to a random tape.") end
-        else
-            SetFarmStatus("No tape found", C.Yellow)
-            if notify then Notify("Teleport", "Tape / pita tidak ditemukan.", "err") end
-        end
-    end)
-end
-
-local function FarmTeleport()
-    if IsAtok then
-        if AtokTape then
-            TeleportTape(false)
-        else
-            TeleportKey(false)
-        end
-    else
-        SmartTeleport()
-    end
 end
 
 --==============================================================
@@ -2772,6 +2825,12 @@ local function Launch()
         Notify("Scanner", "Target scan & visited history reset.")
     end)
 
+    -- FITUR BARU: Auto Farm V1 & V2 (khusus Opah)
+    if IsOpahMap then
+        Action(UtilPage, "AUTO FARM V1 (KEY + LOCK)", 6, AutoFarmOpahV1)
+        Action(UtilPage, "AUTO FARM V2 (KEY + NOTE + LOCK)", 7, AutoFarmOpahV2)
+    end
+
     local SettingsPage = Pages.Settings
 
     Toggle(SettingsPage, "UI Animations", "Enable smooth transitions.", true, 1, function(v)
@@ -3006,6 +3065,8 @@ local function Launch()
         farmIcon, farmTitle, farmSub = "tape", "Teleport Tape", "Random pita / tape each click"
     elseif IsAtok then
         farmIcon, farmTitle, farmSub = "key", "Teleport Key", "Random key each click"
+    elseif IsOpahMap then
+        farmIcon, farmTitle, farmSub = "key", "Auto Farm V1/V2", "Use Utility page buttons"
     end
     MakeIcon(farmIcon, AutoBtn, 22, C.Yellow, UDim2.fromOffset(14, 18))
     Text(AutoBtn, farmTitle, UDim2.fromOffset(46, 10), UDim2.new(1, -90, 0, 20), 13, C.White, BOLD)
@@ -3013,7 +3074,14 @@ local function Launch()
     MakeIcon("arrow", AutoBtn, 16, C.Gray, UDim2.new(1, -32, 0.5, -8))
     AutoBtn.MouseEnter:Connect(function() Tween(AutoBtn, 0.12, { BackgroundColor3 = Color3.fromRGB(205, 206, 212) }) end)
     AutoBtn.MouseLeave:Connect(function() Tween(AutoBtn, 0.12, { BackgroundColor3 = C.White }) end)
-    AutoBtn.MouseButton1Click:Connect(FarmTeleport)
+    if IsOpahMap then
+        AutoBtn.MouseButton1Click:Connect(function()
+            -- Di Opah, tombol FarmPanel membuka Utility page (karena V1/V2 ada di sana)
+            SelectTab("Utility")
+        end)
+    else
+        AutoBtn.MouseButton1Click:Connect(FarmTeleport)
+    end
 
     local SafeBtn = New("TextButton", {
         Size = UDim2.new(1, -32, 0, 58),
