@@ -19,17 +19,12 @@ local Player = Players.LocalPlayer
 local PlayerGui = Player:WaitForChild("PlayerGui")
 
 --==============================================================
--- MAP DETECTION
+-- MAP DETECTION (unsupported maps are kicked)
 --==============================================================
 
 local OPAH_IDS = {
     [101051454784523] = true,
     [91246277860636] = true,
-}
-
-local CEKGU_IDS = {
-    [135493464782683] = true,
-    [106473672978445] = true,
 }
 
 local ATOK_IDS = {
@@ -56,14 +51,10 @@ end
 local MapMode, MapLabel = nil, nil
 local AtokTape = false
 local IsOpahMap = false
-local IsCekguMap = false
 
 if MatchId(OPAH_IDS) then
     MapMode, MapLabel = "Opah", "Opah"
     IsOpahMap = true
-elseif MatchId(CEKGU_IDS) then
-    MapMode, MapLabel = "Cekgu", "Cekgu"
-    IsCekguMap = true
 elseif MatchId(ATOK_IDS) then
     MapMode, MapLabel = "Atok", "Atok"
 elseif MatchId(ATOK_TAPE_IDS) then
@@ -81,10 +72,8 @@ end
 local IsAtok = MapMode == "Atok"
 
 --==============================================================
--- AUTO KICK ON DEATH & SPAWN POSITION
+-- AUTO KICK ON DEATH (KHUSUS MAP OPAH)
 --==============================================================
-local CekguSpawnCFrame = nil
-
 local function SetupDeathKick(char)
     local hum = char:WaitForChild("Humanoid", 5)
     if hum then
@@ -102,17 +91,7 @@ if Player.Character then
     SetupDeathKick(Player.Character)
 end
 Player.CharacterAdded:Connect(SetupDeathKick)
-
--- Spawn Cekgu
-if IsCekguMap then
-    task.spawn(function()
-        local char = Player.Character or Player.CharacterAdded:Wait()
-        local root = char:WaitForChild("HumanoidRootPart", 10)
-        if root and not CekguSpawnCFrame then
-            CekguSpawnCFrame = root.CFrame
-        end
-    end)
-end
+--==============================================================
 
 local ATOK_SAFE_POS = Vector3.new(-265.1, 17.3, 135.2)
 
@@ -285,7 +264,6 @@ local State = {
     ESP_Box = true,
     ESP_Distance = true,
     ESP_Drawer = false,
-    ESP_Mob = false,
 
     AutoFarm = false,
     PreviousESP = nil,
@@ -949,28 +927,6 @@ end)
 local function GetCategory(name)
     local n = string.lower(name)
 
-    if IsCekguMap then
-        if string.find(n, "drawer") or string.find(n, "guru") or string.find(n, "loker") then
-            return "CEKGU_ITEM", Color3.fromRGB(255, 215, 0)
-        end
-        if string.find(n, "key") or string.find(n, "gembok") then
-            return "CEKGU_KEY", Color3.fromRGB(50, 255, 50)
-        end
-        return nil
-    end
-
-    if IsAtok then
-        if string.find(n, "blue") and string.find(n, "key") then return "BLUE KEY", Color3.fromRGB(50, 150, 255)
-        elseif string.find(n, "red") and string.find(n, "key") then return "RED KEY", Color3.fromRGB(255, 50, 50)
-        elseif string.find(n, "green") and string.find(n, "key") then return "GREEN KEY", Color3.fromRGB(50, 255, 50)
-        elseif string.find(n, "yellow") and string.find(n, "key") then return "YELLOW KEY", Color3.fromRGB(255, 215, 0)
-        elseif string.find(n, "crowbar", 1, true) then return "CROWBAR", Color3.fromRGB(255, 100, 255)
-        elseif string.find(n, "keynote", 1, true) then return "KEYNOTE", Color3.fromRGB(255, 180, 100)
-        elseif string.find(n, "note", 1, true) then return "NOTE", Color3.fromRGB(255, 255, 100)
-        end
-        return nil
-    end
-
     if string.find(n, "safezone") or string.find(n, "keypad") or string.find(n, "chair") then
         return nil
     end
@@ -1058,14 +1014,33 @@ local function GetPart(inst)
 end
 
 local function Classify(inst)
-    if IsCekguMap then
-        return GetCategory(inst.Name)
-    end
     if IsAtok then
-        if IsDrawerTarget(inst) then
-            return "DRAWER", C.Yellow
+        if AtokTape then
+            -- Atok 2: tidak diubah (perilaku lama)
+            if IsDrawerTarget(inst) then
+                return "DRAWER", C.Yellow
+            end
+            return nil
         end
-        return GetCategory(inst.Name)
+        -- Atok biasa: deteksi item (key / crowbar / note)
+        local n = string.lower(inst.Name)
+        if string.find(n, "safezone") or string.find(n, "keypad") or string.find(n, "chair") then
+            return nil
+        end
+        if string.find(n, "red") and string.find(n, "key") then
+            return "RED_KEY", C.Red
+        elseif string.find(n, "blue") and string.find(n, "key") then
+            return "BLUE_KEY", Color3.fromRGB(105, 165, 235)
+        elseif string.find(n, "green") and string.find(n, "key") then
+            return "GREEN_KEY", C.Green
+        elseif string.find(n, "yellow") and string.find(n, "key") then
+            return "YELLOW_KEY", C.Yellow
+        elseif string.find(n, "crowbar", 1, true) then
+            return "CROWBAR", C.White
+        elseif string.find(n, "note") or string.find(n, "passcode") then
+            return "NOTE", C.Gray
+        end
+        return nil
     end
     return GetCategory(inst.Name)
 end
@@ -1073,8 +1048,6 @@ end
 local function CategoryEnabled(cat)
     if cat == "DRAWER" then return State.ESP_Drawer end
     if cat == "OPAH" then return State.ESP_Opah end
-    if cat == "CEKGU_ITEM" or cat == "CEKGU_KEY" then return State.ESP_Item end
-    if cat == "BLUE KEY" or cat == "RED KEY" or cat == "GREEN KEY" or cat == "YELLOW KEY" or cat == "CROWBAR" or cat == "KEYNOTE" or cat == "NOTE" then return State.ESP_Item end
     return State.ESP_Item
 end
 
@@ -1163,6 +1136,7 @@ local function ApplyESPFlags()
     end
 end
 
+-- ⚠️ IsInsideDrawer: Hanya memblokir jika drawer TERTUTUP (tidak ada ProximityPrompt)
 local function IsInsideDrawer(inst)
     local n = inst.Parent
     while n and n ~= Workspace do
@@ -1185,69 +1159,91 @@ local function IsInsideDrawer(inst)
     return false
 end
 
---==============================================================
--- MOB ESP (GLOBAL)
---==============================================================
-local function UpdateGlobalMobESP()
-    if not State.ESP_Mob then return end
-    local root = Root()
-    if not root then return end
-    local char = Character()
-
-    for _, inst in ipairs(Workspace:GetDescendants()) do
-        if inst:IsA("Model") and inst ~= char then
-            local hum = inst:FindFirstChildOfClass("Humanoid")
-            if hum and hum.Health > 0 then
-                local part = GetPart(inst)
-                if part then
-                    local dist = (root.Position - part.Position).Magnitude
-                    if dist <= MAX_DISTANCE then
-                        if not ESPObjects[inst] then
-                            local hl = Instance.new("Highlight")
-                            hl.Name = "MobHighlight" hl.Adornee = inst hl.FillColor = Color3.fromRGB(255, 50, 50) hl.OutlineColor = Color3.fromRGB(255, 50, 50)
-                            hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop hl.Parent = Workspace
-                            
-                            local bb = Instance.new("BillboardGui")
-                            bb.Name = "MobLabel" bb.Adornee = part bb.Size = UDim2.fromOffset(170, 30) bb.StudsOffset = Vector3.new(0, 3, 0) bb.AlwaysOnTop = true bb.Parent = PlayerGui
-                            
-                            local label = New("TextLabel", { Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, Text = inst.Name, TextColor3 = Color3.fromRGB(255, 50, 50), TextStrokeTransparency = 0.2, TextStrokeColor3 = Color3.new(0, 0, 0), Font = BOLD, TextSize = 12, Parent = bb })
-                            
-                            ESPObjects[inst] = { Highlight = hl, Billboard = bb, Label = label, Category = "MOB", Part = part }
-                        end
-                    else
-                        if ESPObjects[inst] and ESPObjects[inst].Category == "MOB" then RemoveESP(inst) end
-                    end
-                end
-            else
-                if ESPObjects[inst] and ESPObjects[inst].Category == "MOB" then RemoveESP(inst) end
-            end
-        end
-    end
-end
-
 local function ScanESP()
-    if not (State.ESP_Opah or State.ESP_Item or State.ESP_Drawer) then return end
     local root = Root()
     if not root then return end
-    local char = Character()
-
+    local pos = root.Position
     for _, inst in ipairs(Workspace:GetDescendants()) do
-        if not ESPObjects[inst] and not (char and inst:IsDescendantOf(char)) then
+        if not ESPObjects[inst] then
             local cat = Classify(inst)
             if cat and CategoryEnabled(cat) and not IsInsideDrawer(inst) then
                 local part = GetPart(inst)
-                if part and (root.Position - part.Position).Magnitude <= MAX_DISTANCE then
+                if part and part.Parent and (pos - part.Position).Magnitude <= MAX_DISTANCE then
                     CreateESP(inst)
                 end
             end
         end
     end
 end
+
+local function RefreshESP()
+    ClearESP()
+    ScanESP()
+end
+
+local HIGHLIGHT_LIMIT = 24
+
+local function UpdateESP()
+    local root = Root()
+    if not root then return end
+
+    local ranked = {}
+
+    for inst, data in pairs(ESPObjects) do
+        if not inst.Parent then
+            RemoveESP(inst)
+        else
+            local part = data.Part
+            if not part or not part.Parent then
+                part = GetPart(inst)
+                data.Part = part
+                if part then
+                    data.Billboard.Adornee = part
+                    data.Box.Adornee = part
+                    data.Box.Size = part.Size
+                end
+            end
+
+            if not part then
+                RemoveESP(inst)
+            else
+                local dist = (root.Position - part.Position).Magnitude
+                if dist > MAX_DISTANCE then
+                    RemoveESP(inst)
+                else
+                    data.Dist = dist
+                    data.Billboard.Enabled = State.ESP_Name
+                    data.Box.Visible = State.ESP_Box
+
+                    local shown = data.Display or data.Category
+                    if State.ESP_Distance then
+                        data.Label.Text = string.format("%s  [%dm]", shown, math.floor(dist * 0.28))
+                    else
+                        data.Label.Text = shown
+                    end
+
+                    table.insert(ranked, data)
+                end
+            end
+        end
+    end
+
+    table.sort(ranked, function(a, b)
+        local da = (a.Category == "OPAH") and -1 or a.Dist
+        local db = (b.Category == "OPAH") and -1 or b.Dist
+        return da < db
+    end)
+
+    for i, data in ipairs(ranked) do
+        data.Highlight.Enabled = i <= HIGHLIGHT_LIMIT
+    end
+end
+
 --==============================================================
 -- TARGETS / TELEPORT / AUTO TELEPORT
 --==============================================================
 
-local TargetCache = { Key = {}, Note = {}, Drawer = {}, Tape = {}, Cekgu = {}, Time = 0 }
+local TargetCache = { Key = {}, Note = {}, Drawer = {}, Tape = {}, Crowbar = {}, Time = 0 }
 
 local function ZoneInfo(inst)
     if inst:IsA("BasePart") then return inst.CFrame, inst.Size end
@@ -1287,7 +1283,7 @@ local function RefreshTargets()
     TargetCache.Note = {}
     TargetCache.Drawer = {}
     TargetCache.Tape = {}
-    TargetCache.Cekgu = {}
+    TargetCache.Crowbar = {}
 
     local char = Character()
     local zones = {}
@@ -1300,29 +1296,19 @@ local function RefreshTargets()
         end
 
         if not (char and inst:IsDescendantOf(char)) then
-            if IsCekguMap then
-                local cat = GetCategory(inst.Name)
-                if cat == "CEKGU_ITEM" or cat == "CEKGU_KEY" then
+            if IsAtok and AtokTape then
+                if IsTapeName(inst) and not (inst:IsA("Model") and HasTapeDescendant(inst)) then
                     local part = GetPart(inst)
-                    if part and not IsInsideDrawer(inst) then
-                        table.insert(found, { Part = part, Cat = "CEKGU" })
+                    if part then
+                        table.insert(found, { Part = part, Cat = "TAPE" })
                     end
                 end
             elseif IsAtok then
-                if AtokTape then
-                    if IsTapeName(inst) and not (inst:IsA("Model") and HasTapeDescendant(inst)) then
-                        local part = GetPart(inst)
-                        if part then table.insert(found, { Part = part, Cat = "TAPE" }) end
-                    end
-                else
-                    if IsDrawerTarget(inst) then
-                        local part = GetPart(inst)
-                        if part then table.insert(found, { Part = part, Cat = "DRAWER" }) end
-                    end
-                    local cat = GetCategory(inst.Name)
-                    if cat then
-                        local part = GetPart(inst)
-                        if part then table.insert(found, { Part = part, Cat = "ATOK_ITEM" }) end
+                local cat = Classify(inst)
+                if cat then
+                    local part = GetPart(inst)
+                    if part and not IsInsideDrawer(inst) then
+                        table.insert(found, { Part = part, Cat = cat })
                     end
                 end
             else
@@ -1339,20 +1325,57 @@ local function RefreshTargets()
 
     for _, item in ipairs(found) do
         if not InSafeZone(item.Part, zones) then
-            if item.Cat == "DRAWER" then
-                table.insert(TargetCache.Drawer, item.Part)
-            elseif item.Cat == "TAPE" then
-                table.insert(TargetCache.Tape, item.Part)
-            elseif item.Cat == "CEKGU" then
-                table.insert(TargetCache.Cekgu, item.Part)
-            elseif item.Cat == "ATOK_ITEM" or string.find(item.Cat, "KEY") or item.Cat == "NOTE" or item.Cat == "CROWBAR" or item.Cat == "KEYNOTE" then
+            if item.Cat == "DRAWER" or item.Cat == "TAPE" then
+                local list = (item.Cat == "DRAWER") and TargetCache.Drawer or TargetCache.Tape
+                local duplicate = false
+                for _, other in ipairs(list) do
+                    if (other.Position - item.Part.Position).Magnitude < 1.5 then
+                        duplicate = true
+                        break
+                    end
+                end
+                if not duplicate then
+                    table.insert(list, item.Part)
+                end
+            elseif string.find(item.Cat, "KEY") then
                 table.insert(TargetCache.Key, item.Part)
+            elseif item.Cat == "CROWBAR" then
+                table.insert(TargetCache.Crowbar, item.Part)
+            elseif string.find(item.Cat, "NOTE") then
+                table.insert(TargetCache.Note, item.Part)
             end
         end
     end
 end
 
--- SISTEM MEMORI ANTI-DUPLIKAT
+local function FindNearest(kind)
+    RefreshTargets()
+    local root = Root()
+    if not root then return nil end
+
+    local list
+    if kind == "key" then
+        list = TargetCache.Key
+    elseif kind == "tape" then
+        list = TargetCache.Tape
+    else
+        list = TargetCache.Note
+    end
+    local best
+    local shortest = math.huge
+
+    for _, part in ipairs(list) do
+        if part.Parent then
+            local d = (root.Position - part.Position).Magnitude
+            if d < shortest then
+                shortest = d
+                best = part
+            end
+        end
+    end
+    return best
+end
+
 local function PickUnvisited(list, findNearest)
     if not list or #list == 0 then return nil end
 
@@ -1366,11 +1389,13 @@ local function PickUnvisited(list, findNearest)
                     break
                 end
             end
-            if not isVisited then table.insert(unvisited, part) end
+
+            if not isVisited then
+                table.insert(unvisited, part)
+            end
         end
     end
 
-    -- Jika semua sudah dikunjungi, RESET memori
     if #unvisited == 0 then
         table.clear(State.VisitedPositions)
         for _, part in ipairs(list) do
@@ -1386,7 +1411,10 @@ local function PickUnvisited(list, findNearest)
             local shortest = math.huge
             for _, part in ipairs(unvisited) do
                 local d = (root.Position - part.Position).Magnitude
-                if d < shortest then shortest = d pick = part end
+                if d < shortest then
+                    shortest = d
+                    pick = part
+                end
             end
         else
             pick = unvisited[1]
@@ -1395,10 +1423,11 @@ local function PickUnvisited(list, findNearest)
         pick = unvisited[math.random(#unvisited)]
     end
 
-    -- Simpan ke memori
     if pick then
         table.insert(State.VisitedPositions, pick.Position)
-        if #State.VisitedPositions > 100 then table.remove(State.VisitedPositions, 1) end
+        if #State.VisitedPositions > 100 then
+            table.remove(State.VisitedPositions, 1)
+        end
     end
 
     return pick
@@ -1556,7 +1585,12 @@ local function IsNearOpah(radius)
                             elseif inst.Parent and inst.Parent:IsA("Model") then
                                 hum = inst.Parent:FindFirstChildOfClass("Humanoid")
                             end
-                            if hum and hum.Health <= 0 then else return true end
+
+                            if hum and hum.Health <= 0 then
+                                -- Opah mati, abaikan
+                            else
+                                return true
+                            end
                         end
                     end
                 end
@@ -1572,11 +1606,6 @@ local function ZonePos(inst)
 end
 
 local function SafePosition()
-    if IsCekguMap then
-        if CekguSpawnCFrame then return CekguSpawnCFrame.Position end
-        return nil
-    end
-
     if CachedSafeZone and CachedSafeZone.Parent then
         return ZonePos(CachedSafeZone)
     end
@@ -1643,8 +1672,15 @@ local function SetFarmStatus(text, color)
 end
 
 local TeleportBusy = false
-local function RefreshNow() TargetCache.Time = 0 RefreshTargets() end
-local function Rescan() if not IsVip then RefreshNow() end end
+
+local function RefreshNow()
+    TargetCache.Time = 0
+    RefreshTargets()
+end
+
+local function Rescan()
+    if not IsVip then RefreshNow() end
+end
 
 local function PlaceNow(pos)
     local r = Root()
@@ -1665,11 +1701,18 @@ end
 local function TeleportItem(kind)
     if TeleportLoadingActive then return end
     if not Root() then Notify("Teleport", "Character belum siap.", "err") return end
-    if IsNearOpah(OPAH_CANCEL_RADIUS) then return end
+
+    if IsNearOpah(OPAH_CANCEL_RADIUS) then
+        Notify("Quick Action", "Opah terlalu dekat, teleport dibatalkan.", "err")
+        return
+    end
 
     RefreshNow()
     local first = (kind == "key") and TargetCache.Key or TargetCache.Note
-    if #first == 0 then Notify("Quick Action", "Target belum ditemukan.", "err") return end
+    if #first == 0 then
+        Notify("Quick Action", "Target belum ditemukan.", "err")
+        return
+    end
 
     if not TeleportLoading((kind == "key") and "Key" or "Note") then return end
 
@@ -1677,107 +1720,154 @@ local function TeleportItem(kind)
     local list = (kind == "key") and TargetCache.Key or TargetCache.Note
     local target = PickUnvisited(list, true)
 
-    if target and PlaceNow(target.Position) then Notify("Quick Action", "Target ditemukan.")
-    else Notify("Quick Action", "Target belum ditemukan.", "err") end
+    if target and PlaceNow(target.Position) then
+        Notify("Quick Action", "Target ditemukan.")
+    else
+        Notify("Quick Action", "Target belum ditemukan.", "err")
+    end
 end
 
 local function SmartTeleport()
     RunFarm(function()
-        if not Root() then SetFarmStatus("Waiting for character", C.Gray) return end
-        if IsNearOpah(OPAH_CANCEL_RADIUS) then SetFarmStatus("Opah terlalu dekat", C.Yellow) return end
+        if not Root() then
+            SetFarmStatus("Waiting for character", C.Gray)
+            Notify("Teleport", "Character belum siap.", "err")
+            return
+        end
+
+        if IsNearOpah(OPAH_CANCEL_RADIUS) then
+            SetFarmStatus("Opah terlalu dekat", C.Yellow)
+            return
+        end
 
         RefreshNow()
-        if #TargetCache.Key == 0 and #TargetCache.Note == 0 then SetFarmStatus("No key or note found", C.Yellow) return end
-        if not TeleportLoading("Key / Note") then SetFarmStatus("Teleport cancelled", C.Gray) return end
+        if #TargetCache.Key == 0 and #TargetCache.Note == 0 then
+            SetFarmStatus("No key or note found", C.Yellow)
+            return
+        end
+
+        if not TeleportLoading("Key / Note") then
+            SetFarmStatus("Teleport cancelled", C.Gray)
+            return
+        end
 
         Rescan()
         local target = PickUnvisited(TargetCache.Key, true)
         local label = "Key"
-        if not target then target = PickUnvisited(TargetCache.Note, true) label = "Note" end
 
-        if target and PlaceNow(target.Position) then SetFarmStatus("Teleported to " .. label, C.Green)
-        else SetFarmStatus("No key or note found", C.Yellow) end
+        if not target then
+            target = PickUnvisited(TargetCache.Note, true)
+            label = "Note"
+        end
+
+        if target and PlaceNow(target.Position) then
+            SetFarmStatus("Teleported to " .. label, C.Green)
+        else
+            SetFarmStatus("No key or note found", C.Yellow)
+        end
     end)
 end
 
-local function TeleportDrawer(notify)
+-- TeleportKey: teleport acak ke salah satu item (key / crowbar / note) untuk Atok biasa
+local function TeleportKey(notify)
     RunFarm(function()
-        if not Root() then if notify then Notify("Teleport", "Character belum siap.", "err") end return end
-        if IsNearOpah(OPAH_CANCEL_RADIUS) then SetFarmStatus("Opah terlalu dekat", C.Yellow) return end
+        if not Root() then
+            SetFarmStatus("Waiting for character", C.Gray)
+            if notify then Notify("Teleport", "Character belum siap.", "err") end
+            return
+        end
+
+        if IsNearOpah(OPAH_CANCEL_RADIUS) then
+            SetFarmStatus("Opah terlalu dekat", C.Yellow)
+            if notify then Notify("Teleport", "Opah terlalu dekat, teleport dibatalkan.", "err") end
+            return
+        end
 
         RefreshNow()
-        if #TargetCache.Drawer == 0 then SetFarmStatus("No drawer found", C.Yellow) if notify then Notify("Teleport", "Drawer tidak ditemukan.", "err") end return end
-        if not TeleportLoading("Drawer") then SetFarmStatus("Teleport cancelled", C.Gray) return end
+        local total = #TargetCache.Key + #TargetCache.Crowbar + #TargetCache.Note
+        if total == 0 then
+            SetFarmStatus("No item found", C.Yellow)
+            if notify then Notify("Teleport", "Item tidak ditemukan.", "err") end
+            return
+        end
+
+        if not TeleportLoading("Item") then
+            SetFarmStatus("Teleport cancelled", C.Gray)
+            return
+        end
 
         Rescan()
         local list = {}
-        for _, part in ipairs(TargetCache.Drawer) do if part.Parent then table.insert(list, part) end end
+        for _, p in ipairs(TargetCache.Key) do if p.Parent then table.insert(list, p) end end
+        for _, p in ipairs(TargetCache.Crowbar) do if p.Parent then table.insert(list, p) end end
+        for _, p in ipairs(TargetCache.Note) do if p.Parent then table.insert(list, p) end end
+
         local pick = PickUnvisited(list, false)
 
-        if pick and PlaceNow(pick.Position) then SetFarmStatus(string.format("Random drawer (%d found)", #list), C.Green) if notify then Notify("Teleport", "Teleported to a random drawer.") end
-        else SetFarmStatus("No drawer found", C.Yellow) if notify then Notify("Teleport", "Drawer tidak ditemukan.", "err") end end
+        if pick and PlaceNow(pick.Position) then
+            SetFarmStatus(string.format("Random key (%d found)", #list), C.Green)
+            if notify then Notify("Teleport", "Teleported to a random key.") end
+        else
+            SetFarmStatus("No item found", C.Yellow)
+            if notify then Notify("Teleport", "Item tidak ditemukan.", "err") end
+        end
     end)
 end
 
 local function TeleportTape(notify)
     RunFarm(function()
-        if not Root() then if notify then Notify("Teleport", "Character belum siap.", "err") end return end
-        if IsNearOpah(OPAH_CANCEL_RADIUS) then SetFarmStatus("Opah terlalu dekat", C.Yellow) return end
+        if not Root() then
+            SetFarmStatus("Waiting for character", C.Gray)
+            if notify then Notify("Teleport", "Character belum siap.", "err") end
+            return
+        end
+
+        if IsNearOpah(OPAH_CANCEL_RADIUS) then
+            SetFarmStatus("Opah terlalu dekat", C.Yellow)
+            if notify then Notify("Teleport", "Opah terlalu dekat, teleport dibatalkan.", "err") end
+            return
+        end
 
         RefreshNow()
-        if #TargetCache.Tape == 0 then SetFarmStatus("No tape found", C.Yellow) if notify then Notify("Teleport", "Tape tidak ditemukan.", "err") end return end
-        if not TeleportLoading("Tape") then SetFarmStatus("Teleport cancelled", C.Gray) return end
+        if #TargetCache.Tape == 0 then
+            SetFarmStatus("No tape found", C.Yellow)
+            if notify then Notify("Teleport", "Tape / pita tidak ditemukan.", "err") end
+            return
+        end
+
+        if not TeleportLoading("Tape") then
+            SetFarmStatus("Teleport cancelled", C.Gray)
+            return
+        end
 
         Rescan()
         local list = {}
-        for _, part in ipairs(TargetCache.Tape) do if part.Parent then table.insert(list, part) end end
+        for _, part in ipairs(TargetCache.Tape) do
+            if part.Parent then table.insert(list, part) end
+        end
+
         local pick = PickUnvisited(list, false)
 
-        if pick and PlaceNow(pick.Position) then SetFarmStatus(string.format("Random tape (%d found)", #list), C.Green) if notify then Notify("Teleport", "Teleported to a random tape.") end
-        else SetFarmStatus("No tape found", C.Yellow) if notify then Notify("Teleport", "Tape tidak ditemukan.", "err") end end
-    end)
-end
-
-local function TeleportCekguRandom(notify)
-    RunFarm(function()
-        if not Root() then if notify then Notify("Teleport", "Character belum siap.", "err") end return end
-        RefreshNow()
-        if #TargetCache.Cekgu == 0 then SetFarmStatus("No item found", C.Yellow) if notify then Notify("Teleport", "Item tidak ditemukan.", "err") end return end
-        if not TeleportLoading("Item Cekgu") then SetFarmStatus("Teleport cancelled", C.Gray) return end
-
-        Rescan()
-        local list = {}
-        for _, part in ipairs(TargetCache.Cekgu) do if part.Parent then table.insert(list, part) end end
-        local pick = PickUnvisited(list, false)
-
-        if pick and PlaceNow(pick.Position) then SetFarmStatus(string.format("Random item (%d found)", #list), C.Green) if notify then Notify("Teleport", "Teleported to random item.") end
-        else SetFarmStatus("No item found", C.Yellow) if notify then Notify("Teleport", "Item tidak ditemukan.", "err") end end
-    end)
-end
-
-local function TeleportAtokItemRandom(notify)
-    RunFarm(function()
-        if not Root() then if notify then Notify("Teleport", "Character belum siap.", "err") end return end
-        if IsNearOpah(OPAH_CANCEL_RADIUS) then SetFarmStatus("Opah terlalu dekat", C.Yellow) return end
-
-        RefreshNow()
-        if #TargetCache.Key == 0 then SetFarmStatus("No item found", C.Yellow) if notify then Notify("Teleport", "Item tidak ditemukan.", "err") end return end
-        if not TeleportLoading("Item Atok") then SetFarmStatus("Teleport cancelled", C.Gray) return end
-
-        Rescan()
-        local pick = PickUnvisited(TargetCache.Key, false)
-
-        if pick and PlaceNow(pick.Position) then SetFarmStatus("Random Atok Item", C.Green) if notify then Notify("Teleport", "Teleported to random item.") end
-        else SetFarmStatus("No item found", C.Yellow) if notify then Notify("Teleport", "Item tidak ditemukan.", "err") end end
+        if pick and PlaceNow(pick.Position) then
+            SetFarmStatus(string.format("Random tape (%d found)", #list), C.Green)
+            if notify then Notify("Teleport", "Teleported to a random tape.") end
+        else
+            SetFarmStatus("No tape found", C.Yellow)
+            if notify then Notify("Teleport", "Tape / pita tidak ditemukan.", "err") end
+        end
     end)
 end
 
 local function FarmTeleport()
-    if IsCekguMap then TeleportCekguRandom(false)
-    elseif IsAtok then
-        if AtokTape then TeleportTape(false)
-        else TeleportDrawer(false) end
-    else SmartTeleport() end
+    if IsAtok then
+        if AtokTape then
+            TeleportTape(false)
+        else
+            TeleportKey(false)
+        end
+    else
+        SmartTeleport()
+    end
 end
 
 --==============================================================
@@ -1920,7 +2010,7 @@ local function SetFly(enabled)
 end
 
 --==============================================================
--- MAIN INTERFACE (UI ASLI)
+-- MAIN INTERFACE
 --==============================================================
 
 local function Launch()
@@ -2544,77 +2634,61 @@ local function Launch()
 
     local ESPPage = Pages.ESP
 
-    local ESPOpahSwitch, ESPItemSwitch, ESPDrawerSwitch, ESPMobSwitch
+    local ESPOpahSwitch, ESPItemSwitch, ESPDrawerSwitch
 
-    -- SELALU ADA ESP MOB UNTUK SEMUA MAP
-    ESPMobSwitch = Toggle(ESPPage, "ESP Mob", "Highlight all mobs.", State.ESP_Mob, 1, function(v)
-        State.ESP_Mob = v
-        if not v then
-            for inst, data in pairs(ESPObjects) do
-                if data.Category == "MOB" then RemoveESP(inst) end
-            end
-        end
-    end)
-
-    if IsAtok then
-        ESPDrawerSwitch = Toggle(ESPPage, "ESP Drawer", "Highlight drawers.", State.ESP_Drawer, 2, function(v)
+    if IsAtok and AtokTape then
+        ESPDrawerSwitch = Toggle(ESPPage, "ESP Drawer", "Highlight drawers.", State.ESP_Drawer, 1, function(v)
             State.ESP_Drawer = v
             ApplyESPFlags()
             ScanESP()
         end)
-        ESPItemSwitch = Toggle(ESPPage, "ESP Item", "Highlight keys, notes, etc.", State.ESP_Item, 3, function(v)
-            State.ESP_Item = v
-            ApplyESPFlags()
-            ScanESP()
-        end)
-    elseif IsCekguMap then
-        ESPItemSwitch = Toggle(ESPPage, "ESP Item Cekgu", "Highlight drawers, loker, guru.", State.ESP_Item, 2, function(v)
+    elseif IsAtok then
+        ESPItemSwitch = Toggle(ESPPage, "ESP Item", "Highlight keys, crowbar and notes.", State.ESP_Item, 1, function(v)
             State.ESP_Item = v
             ApplyESPFlags()
             ScanESP()
         end)
     else
-        ESPOpahSwitch = Toggle(ESPPage, "ESP Opah", "Highlight the Opah character.", State.ESP_Opah, 2, function(v)
+        ESPOpahSwitch = Toggle(ESPPage, "ESP Opah", "Highlight the Opah character.", State.ESP_Opah, 1, function(v)
             State.ESP_Opah = v
             ApplyESPFlags()
             ScanESP()
         end)
-        ESPItemSwitch = Toggle(ESPPage, "ESP Key / Note", "Find keys, notes and passcodes.", State.ESP_Item, 3, function(v)
+
+        ESPItemSwitch = Toggle(ESPPage, "ESP Key / Note", "Find keys, notes and passcodes.", State.ESP_Item, 2, function(v)
             State.ESP_Item = v
             ApplyESPFlags()
             ScanESP()
         end)
     end
 
-    Toggle(ESPPage, "Show Name", "Display the target label.", State.ESP_Name, 4, function(v)
+    Toggle(ESPPage, "Show Name", "Display the target label.", State.ESP_Name, 3, function(v)
         State.ESP_Name = v
         UpdateESP()
     end)
 
-    Toggle(ESPPage, "Show Box", "Display the target bounding box.", State.ESP_Box, 5, function(v)
+    Toggle(ESPPage, "Show Box", "Display the target bounding box.", State.ESP_Box, 4, function(v)
         State.ESP_Box = v
         UpdateESP()
     end)
 
-    Toggle(ESPPage, "Show Distance", "Display approximate distance.", State.ESP_Distance, 6, function(v)
+    Toggle(ESPPage, "Show Distance", "Display approximate distance.", State.ESP_Distance, 5, function(v)
         State.ESP_Distance = v
         UpdateESP()
     end)
 
-    Action(ESPPage, "REFRESH ESP", 7, function()
+    Action(ESPPage, "REFRESH ESP", 6, function()
         RefreshESP()
         Notify("ESP", "ESP refreshed.")
     end)
 
-    Action(ESPPage, "DISABLE ALL ESP", 8, function()
+    Action(ESPPage, "DISABLE ALL ESP", 7, function()
         State.ESP_Opah = false
         State.ESP_Item = false
         State.ESP_Drawer = false
-        State.ESP_Mob = false
         if ESPOpahSwitch then ESPOpahSwitch.Set(false, true) end
         if ESPItemSwitch then ESPItemSwitch.Set(false, true) end
         if ESPDrawerSwitch then ESPDrawerSwitch.Set(false, true) end
-        if ESPMobSwitch then ESPMobSwitch.Set(false, true) end
         ClearESP()
         Notify("ESP", "All ESP disabled.")
     end)
@@ -2643,20 +2717,18 @@ local function Launch()
         State.AutoFarm = v
 
         if v then
-            State.PreviousESP = { Opah = State.ESP_Opah, Item = State.ESP_Item, Mob = State.ESP_Drawer }
-            if IsAtok then
+            State.PreviousESP = { Opah = State.ESP_Opah, Item = State.ESP_Item, Drawer = State.ESP_Drawer }
+            if IsAtok and AtokTape then
                 State.ESP_Drawer = true
-                State.ESP_Item = true
                 if ESPDrawerSwitch then ESPDrawerSwitch.Set(true, true) end
-                if ESPItemSwitch then ESPItemSwitch.Set(true, true) end
-            elseif IsCekguMap then
+            elseif IsAtok then
                 State.ESP_Item = true
                 if ESPItemSwitch then ESPItemSwitch.Set(true, true) end
             else
                 State.ESP_Opah = true
                 State.ESP_Item = true
-                if ESPOpahSwitch then ESPOpahSwitch.Set(true, true) end
-                if ESPItemSwitch then ESPItemSwitch.Set(true, true) end
+                ESPOpahSwitch.Set(true, true)
+                ESPItemSwitch.Set(true, true)
             end
             RefreshESP()
 
@@ -2669,12 +2741,10 @@ local function Launch()
             if State.PreviousESP then
                 State.ESP_Opah = State.PreviousESP.Opah
                 State.ESP_Item = State.PreviousESP.Item
-                State.ESP_Drawer = State.PreviousESP.Mob
-                
+                State.ESP_Drawer = State.PreviousESP.Drawer
                 if ESPOpahSwitch then ESPOpahSwitch.Set(State.ESP_Opah, true) end
                 if ESPItemSwitch then ESPItemSwitch.Set(State.ESP_Item, true) end
                 if ESPDrawerSwitch then ESPDrawerSwitch.Set(State.ESP_Drawer, true) end
-                
                 ApplyESPFlags()
                 ScanESP()
             end
@@ -2685,14 +2755,11 @@ local function Launch()
     end)
 
     Action(UtilPage, "TELEPORT TO SAFE ZONE", 2, TeleportSafe)
-    if IsCekguMap then
-        Action(UtilPage, "TELEPORT TO ITEM", 3, function() TeleportCekguRandom(true) end)
-    elseif IsAtok then
+    if IsAtok then
         if AtokTape then
             Action(UtilPage, "TELEPORT TO TAPE / PITA", 3, function() TeleportTape(true) end)
         else
-            Action(UtilPage, "TELEPORT TO RANDOM DRAWER", 3, function() TeleportDrawer(true) end)
-            Action(UtilPage, "TELEPORT TO ITEM", 4, function() TeleportAtokItemRandom(true) end)
+            Action(UtilPage, "TELEPORT TO RANDOM KEY", 3, function() TeleportKey(true) end)
         end
     else
         Action(UtilPage, "TELEPORT TO KEY", 3, function() TeleportItem("key") end)
@@ -2701,7 +2768,8 @@ local function Launch()
     Action(UtilPage, "REFRESH TARGET SCAN", 5, function()
         RefreshESP()
         TargetCache.Time = 0
-        Notify("Scanner", "Target scan completed.")
+        table.clear(State.VisitedPositions)
+        Notify("Scanner", "Target scan & visited history reset.")
     end)
 
     local SettingsPage = Pages.Settings
@@ -2934,10 +3002,10 @@ local function Launch()
     })
     Panelize(AutoBtn, 12, 0.4)
     local farmIcon, farmTitle, farmSub = "key", "Auto Teleport", "Key first, then Note"
-    if IsCekguMap then
-        farmIcon, farmTitle, farmSub = "drawer", "Teleport Item", "Random item each click"
+    if IsAtok and AtokTape then
+        farmIcon, farmTitle, farmSub = "tape", "Teleport Tape", "Random pita / tape each click"
     elseif IsAtok then
-        farmIcon, farmTitle, farmSub = "drawer", "Teleport Item", "Random item each click"
+        farmIcon, farmTitle, farmSub = "key", "Teleport Key", "Random key each click"
     end
     MakeIcon(farmIcon, AutoBtn, 22, C.Yellow, UDim2.fromOffset(14, 18))
     Text(AutoBtn, farmTitle, UDim2.fromOffset(46, 10), UDim2.new(1, -90, 0, 20), 13, C.White, BOLD)
@@ -3194,7 +3262,6 @@ local function Launch()
         while MainGui and MainGui.Parent do
             task.wait(UPDATE_INTERVAL)
             if State.ESP_Opah or State.ESP_Item or State.ESP_Drawer then UpdateESP() end
-            if State.ESP_Mob then UpdateGlobalMobESP() end
         end
     end)
 
@@ -3209,8 +3276,8 @@ local function Launch()
         if not (State.ESP_Opah or State.ESP_Item or State.ESP_Drawer) then return end
 
         local nameOk
-        if IsAtok or IsCekguMap then
-            nameOk = GetCategory(inst.Name) ~= nil or (IsAtok and IsDrawerName(inst))
+        if IsAtok then
+            nameOk = Classify(inst) ~= nil
         else
             nameOk = GetCategory(inst.Name) ~= nil
         end
@@ -3270,8 +3337,8 @@ local function Launch()
     TopToast("YVONE Hub", "Welcome back!")
     Notify("Map detected", MapLabel .. " (" .. (IsVip and "VIP" or "Free") .. ")")
 
-    if IsAtok then
-        warn("[YVONE] Di map Atok tidak ada ESP Atok (mob). Hanya ESP Drawer yang tersedia.")
+    if IsAtok and AtokTape then
+        warn("[YVONE] Di map Atok 2 tidak ada ESP Atok (mob). Hanya ESP Drawer yang tersedia.")
 
         WarnGui = New("ScreenGui", {
             Name = "YvoneWarning",
@@ -3303,7 +3370,7 @@ local function Launch()
         MakeIcon("warn", wi, 22, C.Bg, CENTER_POS, CENTER)
 
         Text(Warn, "Peringatan", UDim2.fromOffset(66, 10), UDim2.new(1, -170, 0, 22), 15, C.Yellow, BOLD)
-        local wmsg = Text(Warn, "Di map Atok tidak ada ESP Atok (mob). Hanya ESP Drawer yang tersedia.", UDim2.fromOffset(66, 34), UDim2.new(1, -170, 0, 42), 12, C.White)
+        local wmsg = Text(Warn, "Di map Atok 2 tidak ada ESP Atok (mob). Hanya ESP Drawer yang tersedia.", UDim2.fromOffset(66, 34), UDim2.new(1, -170, 0, 42), 12, C.White)
         wmsg.TextWrapped = true
         wmsg.TextYAlignment = Enum.TextYAlignment.Top
 
